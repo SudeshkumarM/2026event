@@ -14,9 +14,9 @@ class Config:
     JWT_EVENT_SECRET = os.getenv("JWT_EVENT_SECRET") or SECRET_KEY
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=int(os.getenv("JWT_ACCESS_HOURS", 24)))
     
-    # MongoDB Config
-    MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/teamnexus_db")
-    DB_NAME = os.getenv("DB_NAME", "teamnexus_db")
+    # Set DATABASE_URL to the Supabase PostgreSQL connection string in production.
+    # When unset, the backend uses SQLite for local development.
+    DATABASE_URL = os.getenv("DATABASE_URL")
     
     # App Settings
     FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")

@@ -2,12 +2,79 @@ import os
 import sqlite3
 import hashlib
 from datetime import datetime
+from flask import current_app, has_app_context
 from config import Config
 
 DATABASE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "aitargetstrike.db")
 UPLOAD_FOLDER = os.path.join(os.path.dirname(os.path.dirname(__file__)), "secure_uploads")
 
+def _database_url(config=None):
+    if config is not None:
+        return config.get("DATABASE_URL") if hasattr(config, "get") else config.DATABASE_URL
+    if has_app_context():
+        return current_app.config.get("DATABASE_URL")
+    return Config.DATABASE_URL
+
+
+def _postgres_row(cursor):
+    columns = [column.name for column in cursor.description]
+
+    def make_row(values):
+        return PostgresRow(zip(columns, values))
+
+    return make_row
+
+
+class PostgresRow(dict):
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return tuple(self.values())[key]
+        return super().__getitem__(key)
+
+
+class PostgresConnection:
+    def __init__(self, connection):
+        self._connection = connection
+
+    def cursor(self):
+        return PostgresCursor(self._connection.cursor(row_factory=_postgres_row))
+
+    def commit(self):
+        self._connection.commit()
+
+    def rollback(self):
+        self._connection.rollback()
+
+    def close(self):
+        self._connection.close()
+
+
+class PostgresCursor:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def execute(self, query, params=()):
+        query = query.replace("?", "%s")
+        self._cursor.execute(query, params)
+        return self
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+
 def get_db_connection():
+    database_url = _database_url()
+    if database_url:
+        import psycopg
+
+        return PostgresConnection(psycopg.connect(database_url))
+
     conn = sqlite3.connect(DATABASE_FILE)
     conn.row_factory = sqlite3.Row
     # Enforce foreign keys and WAL mode for high concurrency & reliability
@@ -18,6 +85,11 @@ def get_db_connection():
 def init_db(config=None):
     config = Config if config is None else config
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    database_url = _database_url(config)
+    if database_url:
+        _init_postgres_db(config, database_url)
+        return
+
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -278,6 +350,49 @@ def init_db(config=None):
     conn.commit()
     conn.close()
     print("Database schema successfully verified with WAL mode and initial seed.")
+
+
+def _init_postgres_db(config, database_url):
+    import psycopg
+
+    try:
+        conn = PostgresConnection(psycopg.connect(database_url))
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM public.system_config WHERE id = 1")
+        if cursor.fetchone() is None:
+            raise RuntimeError(
+                "Supabase is missing the system_config seed row. Run sql.md in the Supabase SQL Editor."
+            )
+
+        admin_username = (
+            config.get("INITIAL_ADMIN_USERNAME", "admin")
+            if hasattr(config, "get")
+            else config.INITIAL_ADMIN_USERNAME
+        )
+        admin_password = (
+            config.get("INITIAL_ADMIN_PASSWORD")
+            if hasattr(config, "get")
+            else config.INITIAL_ADMIN_PASSWORD
+        )
+        if admin_password:
+            from werkzeug.security import generate_password_hash
+
+            cursor.execute(
+                """
+                INSERT INTO public.admin_users (username, password_hash, role)
+                VALUES (%s, %s, 'ADMIN')
+                ON CONFLICT (username) DO NOTHING
+                """,
+                (admin_username, generate_password_hash(admin_password, method="scrypt")),
+            )
+            conn.commit()
+        conn.close()
+    except psycopg.Error as error:
+        raise RuntimeError(
+            "Could not initialize Supabase PostgreSQL. Check DATABASE_URL and run sql.md "
+            "in the Supabase SQL Editor."
+        ) from error
+
 
 if __name__ == '__main__':
     init_db()

@@ -7,6 +7,7 @@ import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 from flask import Blueprint, request, jsonify, Response, current_app
+import psycopg
 from werkzeug.security import check_password_hash, generate_password_hash
 import jwt
 from app.utils.sqlite_db import get_db_connection, UPLOAD_FOLDER
@@ -380,24 +381,27 @@ def register_team():
             cursor.execute("""
                 INSERT INTO teams (team_code, team_name, college_name, queue_number, status)
                 VALUES (?, ?, ?, ?, 'WAITING')
+                RETURNING id
             """, (team_code, team_name, college_name or p1_college, next_queue_num))
-            team_id = cursor.lastrowid
+            team_id = cursor.fetchone()["id"]
 
             # Insert Player 1 (Aim) — store image data URL and blob for DB-backed verification
             cursor.execute("""
                 INSERT INTO participants (team_id, player_role, name, college, phone, roll_number, id_card_filename, id_card_blob, id_card_data, id_card_mime)
                 VALUES (?, 'PLAYER_1_AIM', ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
             """, (team_id, p1_name, p1_college, clean_p1_phone, p1_roll, p1_storage_key,
                   p1_file_bytes, p1_data_url, p1_mime))
-            p1_id = cursor.lastrowid
+            p1_id = cursor.fetchone()["id"]
 
             # Insert Player 2 (Shoot) — store image data URL and blob for DB-backed verification
             cursor.execute("""
                 INSERT INTO participants (team_id, player_role, name, college, phone, roll_number, id_card_filename, id_card_blob, id_card_data, id_card_mime)
                 VALUES (?, 'PLAYER_2_SHOOT', ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING id
             """, (team_id, p2_name, p2_college, clean_p2_phone, p2_roll, p2_storage_key,
                   p2_file_bytes, p2_data_url, p2_mime))
-            p2_id = cursor.lastrowid
+            p2_id = cursor.fetchone()["id"]
 
             # Insert Private Documents Metadata (with image blob for DB-backed retrieval)
             cursor.execute("""
@@ -421,7 +425,7 @@ def register_team():
             conn.commit()
             break
 
-        except sqlite3.IntegrityError:
+        except (sqlite3.IntegrityError, psycopg.IntegrityError):
             conn.rollback()
             if attempt == max_retries - 1:
                 if os.path.exists(p1_path): os.remove(p1_path)

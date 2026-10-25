@@ -6,18 +6,20 @@
 -- This creates the PostgreSQL schema, seeds event configuration, and creates
 -- exactly ten test game access codes.
 --
--- Keep the service_role key on the server only. Never put it in the frontend,
--- commit it, or share it. The anon key is not a database password.
+-- Keep service_role keys and database connection strings on the server only.
+-- Never put them in the frontend, commit them, or share them. The anon /
+-- publishable key is not a database password.
 --
 -- Participant details, ID-card images, access-code hashes, and session tokens
 -- are private. Public clients can read only the limited competition views
--- defined below. The Flask backend must connect using a server-side
--- service_role key (or another trusted server-side database role).
+-- defined below. Configure the Flask backend with the Supabase PostgreSQL
+-- connection string as its server-only DATABASE_URL.
 --
--- IMPORTANT: Running this SQL creates the Supabase schema, but does not move
--- application data or switch the Flask backend from its current SQLite
--- connection. The backend database access layer must be migrated to PostgreSQL
--- before the running app will use this Supabase database.
+-- Running this SQL creates the Supabase schema and seeds initial event/test
+-- data. Configure the Flask backend's server-only DATABASE_URL with the
+-- Supabase PostgreSQL connection string to use this database; without it, the
+-- backend continues to use local SQLite. Existing local SQLite records are
+-- not copied to Supabase by this schema setup.
 --
 -- Test game access codes (each is also the associated test team's code):
 -- ATS-TEST-001

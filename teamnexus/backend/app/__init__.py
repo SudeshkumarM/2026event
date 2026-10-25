@@ -16,7 +16,7 @@ def create_app(test_config=None):
     # Enable CORS for all frontend origins
     CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 
-    # Initialize SQLite Database & Tables
+    # Initialize the configured database (Supabase PostgreSQL or local SQLite).
     init_db(app.config)
 
     # Register Blueprints

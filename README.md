@@ -3,7 +3,7 @@
 
 [![React 19](https://img.shields.io/badge/Frontend-React%2019%20%7C%20Vite%20%7C%20Tailwind-61dafb?style=for-the-badge&logo=react)](https://react.dev/)
 [![Python Flask](https://img.shields.io/badge/Backend-Python%203.11%20%7C%20Flask%203.1-4584b6?style=for-the-badge&logo=python)](https://flask.palletsprojects.com/)
-[![SQLite WAL](https://img.shields.io/badge/Database-SQLite%203%20%5BWAL%20Mode%5D-003b57?style=for-the-badge&logo=sqlite)](https://www.sqlite.org/)
+[![Database](https://img.shields.io/badge/Database-Supabase%20PostgreSQL%20%7C%20Local%20SQLite-3ecf8e?style=for-the-badge&logo=supabase)](https://supabase.com/)
 [![ESP32 WebSocket](https://img.shields.io/badge/Hardware-ESP32%20IoT%20Trigger-e7352c?style=for-the-badge&logo=espressif)](https://www.espressif.com/)
 [![Web Audio API](https://img.shields.io/badge/Audio-Procedural%20Web%20Audio%20API-a855f7?style=for-the-badge)](https://developer.mozilla.org/en-US/docs/Web/API/Web_Audio_API)
 [![Server-Sent Events](https://img.shields.io/badge/Real--Time-Server--Sent%20Events%20(SSE)-10b981?style=for-the-badge)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events)
@@ -220,7 +220,7 @@ The Game Station contains a live ESP32 status drawer:
                                   │ • Cryptographic Verification│
                                   │ • Anti-Cheat Telemetry Engine
                                   │ • Server-Sent Events (SSE)  │
-                                  │ • SQLite WAL Data Layer     │
+                                  │ • Supabase PostgreSQL / SQLite│
                                   └──────────────┬──────────────┘
                                                  │
                   ┌──────────────────────────────┴──────────────────────────────┐
@@ -295,7 +295,7 @@ Scores submitted by client browsers are **never trusted blindly**. The backend `
 ## 7. Database Architecture & Schemas
 
 ### SQLite 3 High-Concurrency WAL Engine
-The system uses SQLite 3 optimized for enterprise stability during sudden campus power fluctuations:
+When `DATABASE_URL` is not configured, the backend uses SQLite for local development:
 - **Write-Ahead Logging (WAL)**: `PRAGMA journal_mode = WAL;` allows simultaneous readers (leaderboard, projector, admin) while the game station writes results.
 - **Foreign Keys**: `PRAGMA foreign_keys = ON;` ensures referential integrity across cascading deletes.
 - **Relational Tables**:
@@ -310,7 +310,7 @@ The system uses SQLite 3 optimized for enterprise stability during sudden campus
   - `audit_logs`: Detailed operational logging for security review.
 
 ### PostgreSQL / Supabase Production Schema
-For Supabase setup, run the SQL Editor script in [`sql.md`](./sql.md). It defines the PostgreSQL schema, private-by-default table access, public-safe views, and ten test game access codes (`ATS-TEST-001` through `ATS-TEST-010`). Local development also seeds these codes into SQLite on backend startup. Running the Supabase script does not migrate the Flask backend: it currently connects to SQLite, so a PostgreSQL database-layer migration is still required before the live app uses Supabase.
+For Supabase setup, run the SQL Editor script in [`sql.md`](./sql.md). It defines the PostgreSQL schema, private-by-default table access, public-safe views, and ten test game access codes (`ATS-TEST-001` through `ATS-TEST-010`). Set the backend-only `DATABASE_URL` to the Supabase PostgreSQL connection string to use Supabase; leave it unset for local SQLite. Do not use the frontend publishable/anon key as a database password or expose a database connection string in frontend configuration.
 
 ---
 
@@ -603,9 +603,8 @@ d:/2026event/
     │   │   │   ├── anti_cheat.py       # Telemetry anomaly & shot validation engine
     │   │   │   └── queue_manager.py    # Queue state transitions and auto-skip logic
     │   │   └── utils/
-    │   │       ├── db.py               # Legacy database helpers
     │   │       ├── migrate_db.py       # Migration helper scripts
-    │   │       └── sqlite_db.py        # SQLite WAL database initialization and connections
+    │   │       └── sqlite_db.py        # Supabase PostgreSQL / SQLite connections
     │   └── tests/
     │       ├── event_simulation.py     # 100-team load simulation test
     │       ├── test_anti_cheat_and_queue.py # Telemetry & queue timeout unit tests

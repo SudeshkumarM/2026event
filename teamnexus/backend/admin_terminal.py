@@ -158,9 +158,10 @@ def generate_auto_team():
 
         cursor.execute("""
             INSERT INTO teams (team_code, team_name, college_name, queue_number, status)
-            VALUES (?, ?, ?, ?, 'WAITING');
+            VALUES (?, ?, ?, ?, 'WAITING')
+            RETURNING id;
         """, (team_code, team_name, college, t_count))
-        team_id = cursor.lastrowid
+        team_id = cursor.fetchone()["id"]
 
         cursor.execute("""
             INSERT INTO participants (team_id, player_role, name, college, phone, roll_number)

@@ -5,11 +5,29 @@ import random
 import pytest
 from app import create_app
 from app.routes.api_routes import generate_access_code, hash_access_code, verify_image_bytes
-from app.utils.sqlite_db import get_db_connection, init_db
+from app.utils.sqlite_db import PostgresCursor, PostgresRow, get_db_connection, init_db
 
 TINY_PNG_B64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 TEST_ADMIN_USERNAME = "test-admin"
 TEST_ADMIN_PASSWORD = "test-only-password"
+
+def test_postgres_cursor_uses_named_driver_placeholders():
+    class CursorStub:
+        def execute(self, query, params):
+            self.query = query
+            self.params = params
+
+    cursor_stub = CursorStub()
+    PostgresCursor(cursor_stub).execute("SELECT ? AS value", (42,))
+
+    assert cursor_stub.query == "SELECT %s AS value"
+    assert cursor_stub.params == (42,)
+
+def test_postgres_row_supports_named_and_positional_access():
+    row = PostgresRow([("id", 42), ("name", "team")])
+
+    assert row["name"] == "team"
+    assert row[0] == 42
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):

@@ -6,7 +6,8 @@ import { esp32Service, TRIGGER_STATUS } from '../services/esp32Trigger';
 import {
   Crosshair, Zap, Play, Trophy, RotateCcw, AlertTriangle, CheckCircle2,
   ShieldCheck, Flame, KeyRound, Clock, BookOpen, Layers,
-  Radio, Wifi, WifiOff, Cpu, RefreshCw, X, Activity, Sliders, Check
+  Radio, Wifi, WifiOff, Cpu, RefreshCw, X, Activity, Sliders, Check,
+  Maximize2, Minimize2
 } from 'lucide-react';
 
 const STATES = {
@@ -22,8 +23,11 @@ const STATES = {
 export default function GameStation() {
   const canvasRef = useRef(null);
   const engineRef = useRef(null);
+  const gameAreaRef = useRef(null);
 
   const [gameState, setGameState] = useState(STATES.VERIFY);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [fullscreenError, setFullscreenError] = useState('');
   const [countdown, setCountdown] = useState(3);
 
   // Access inputs - Clean default for event participants
@@ -77,6 +81,29 @@ export default function GameStation() {
   const gameStateRef = useRef(gameState);
   useEffect(() => {
     gameStateRef.current = gameState;
+  }, [gameState]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const fullscreen = document.fullscreenElement === gameAreaRef.current;
+      setIsFullscreen(fullscreen);
+      if (fullscreen) setFullscreenError('');
+    };
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    if (
+      [STATES.SUBMITTING, STATES.GAME_OVER, STATES.ERROR].includes(gameState) &&
+      document.fullscreenElement === gameAreaRef.current
+    ) {
+      document.exitFullscreen().catch((error) => {
+        console.error('Could not exit game fullscreen:', error);
+        setFullscreenError('The match ended, but the browser could not exit fullscreen. Press Esc to leave.');
+      });
+    }
   }, [gameState]);
 
   // ESP32 WebSocket Lifecycle & Shooting Integration
@@ -137,6 +164,22 @@ export default function GameStation() {
     esp32Service.simulateTrigger();
   };
 
+  const toggleGameFullscreen = async () => {
+    setFullscreenError('');
+    try {
+      if (document.fullscreenElement === gameAreaRef.current) {
+        await document.exitFullscreen();
+      } else if (!document.fullscreenElement && gameAreaRef.current?.requestFullscreen) {
+        await gameAreaRef.current.requestFullscreen();
+      } else {
+        setFullscreenError('Fullscreen is unavailable while another element is fullscreen.');
+      }
+    } catch (error) {
+      console.error('Could not toggle game fullscreen:', error);
+      setFullscreenError('Could not enter fullscreen. Check your browser permissions and try again.');
+    }
+  };
+
   // Check for existing active session on mount (Browser Refresh Recovery)
   useEffect(() => {
     checkCachedSession();
@@ -170,13 +213,17 @@ export default function GameStation() {
 
     try {
       const res = await api.getGameSessionStatus(cachedToken);
-      if (res.success && res.status === 'PLAYING' && res.remaining_seconds > 0) {
+      if (
+        res.success &&
+        ['INITIATED', 'COUNTDOWN', 'PLAYING'].includes(res.status) &&
+        res.remaining_seconds > 0
+      ) {
         setSessionToken(cachedToken);
         setActiveSession({
           team_code: res.team_code,
           team_name: res.team_name,
           difficulty: res.difficulty,
-          duration_seconds: 420,
+          duration_seconds: res.duration_seconds,
           remaining_seconds: res.remaining_seconds
         });
         setHudStats(prev => ({
@@ -236,6 +283,16 @@ export default function GameStation() {
 
   // Start 3-2-1 Countdown
   const launchCountdown = () => {
+    if (!sessionToken) {
+      setErrorMsg('No verified game session is available. Verify the access code again.');
+      setGameState(STATES.ERROR);
+      return;
+    }
+
+    if (!document.fullscreenElement) {
+      void toggleGameFullscreen();
+    }
+
     setGameState(STATES.COUNTDOWN);
     setCountdown(3);
     sound.playCountdown();
@@ -251,25 +308,35 @@ export default function GameStation() {
         sound.playLaser();
       } else {
         clearInterval(timer);
-        setGameState(STATES.PLAYING);
+        api.startGameSession(sessionToken).then((res) => {
+          setActiveSession((current) => ({ ...current, ...res }));
+          setHudStats((current) => ({
+            ...current,
+            remainingSeconds: res.remaining_seconds
+          }));
+          setGameState(STATES.PLAYING);
+        }).catch((err) => {
+          setErrorMsg(err.message || 'Could not start the official game session.');
+          setGameState(STATES.ERROR);
+        });
       }
     }, 1000);
   };
 
-  // Start Official 7-Minute Game Loop when entering PLAYING state and canvas is mounted
+  // Start the official game loop only after the server starts its match clock.
   useEffect(() => {
     if (gameState === STATES.PLAYING && canvasRef.current) {
       const canvas = canvasRef.current;
       const rect = canvas.parentElement?.getBoundingClientRect();
       const w = rect?.width || 960;
-      const h = Math.min(540, Math.max(420, window.innerHeight - 260));
+      const h = rect?.height || Math.min(540, Math.max(420, window.innerHeight - 260));
       canvas.width = w;
       canvas.height = h;
 
       const engine = new TargetStrikeEngine(canvas, {
         difficulty: activeSession?.difficulty || 'MEDIUM',
-        durationSeconds: 420, // Official 7-minute match
-        remainingSeconds: activeSession?.remaining_seconds !== undefined ? activeSession.remaining_seconds : 420,
+        durationSeconds: activeSession?.duration_seconds ?? 420,
+        remainingSeconds: activeSession?.remaining_seconds ?? activeSession?.duration_seconds ?? 420,
         initialScore: activeSession?.current_score || 0,
         initialHits: activeSession?.current_hits || 0,
         initialMisses: activeSession?.current_misses || 0,
@@ -327,13 +394,18 @@ export default function GameStation() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4">
-      <div className="max-w-5xl w-full">
+    <div
+      ref={gameAreaRef}
+      className={`min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4 ${
+        isFullscreen ? 'fixed inset-0 z-[100] h-screen w-screen max-w-none justify-start overflow-hidden' : ''
+      }`}
+    >
+      <div className={`max-w-5xl w-full ${isFullscreen ? 'max-w-none h-full min-h-0 flex flex-col' : ''}`}>
 
         {/* ==================================================================== */}
         {/* ESP32 HARDWARE TRIGGER STATUS PANEL */}
         {/* ==================================================================== */}
-        <div className="mb-4 bg-slate-900/95 border border-slate-800 rounded-2xl p-3.5 shadow-xl backdrop-blur-md flex flex-wrap items-center justify-between gap-3">
+        {!isFullscreen && <div className="mb-4 bg-slate-900/95 border border-slate-800 rounded-2xl p-3.5 shadow-xl backdrop-blur-md flex flex-wrap items-center justify-between gap-3">
           {/* Left: Device & Address */}
           <div className="flex items-center gap-3">
             <div className={`p-2.5 rounded-xl border flex items-center justify-center transition-all ${
@@ -459,7 +531,7 @@ export default function GameStation() {
           {/* Actionable message when unavailable */}
           {esp32Status !== TRIGGER_STATUS.CONNECTED && esp32Status !== TRIGGER_STATUS.CONNECTING && (
             <div className="w-full pt-1.5 border-t border-slate-800/60 text-[11px] font-mono text-amber-400/90 flex items-center justify-between">
-              <span>⚠️ ESP32 not connected. Check Wi-Fi ('ESP32-Trigger') and device power. (Keyboard SPACE shooting remains active)</span>
+              <span>ESP32 is not connected. Use mouse left-click or connect the physical trigger.</span>
               <button
                 type="button"
                 onClick={() => esp32Service.connectESP32()}
@@ -469,7 +541,7 @@ export default function GameStation() {
               </button>
             </div>
           )}
-        </div>
+        </div>}
 
         {/* ==================================================================== */}
         {/* HARDWARE TEST MODE MODAL (SECTION 11) */}
@@ -797,7 +869,7 @@ export default function GameStation() {
                   <Clock className="w-3.5 h-3.5 text-cyan-400" /> Official Session
                 </div>
                 <div className="text-2xl font-black text-white font-mono">
-                  {formatTime(activeSession.remaining_seconds || 420)}
+                  {formatTime(activeSession.remaining_seconds ?? activeSession.duration_seconds ?? 420)}
                 </div>
                 <div className="text-[10px] text-slate-400">7 Minutes Duration</div>
               </div>
@@ -867,7 +939,9 @@ export default function GameStation() {
 
         {/* 4. OFFICIAL PLAYING SCREEN */}
         {gameState === STATES.PLAYING && (
-          <div className="space-y-3">
+          <div
+          className={`space-y-3 ${isFullscreen ? 'flex flex-1 min-h-0 flex-col overflow-hidden' : ''}`}
+          >
             {/* Top HUD Bar */}
             <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-wrap items-center justify-between gap-3 shadow-lg">
               {/* Team Info & Active Stage */}
@@ -971,20 +1045,43 @@ export default function GameStation() {
                     {hardwarePulse && <span className="text-cyan-300 animate-ping">●</span>}
                   </div>
                 </div>
+
+                <button
+                  type="button"
+                  onClick={toggleGameFullscreen}
+                  aria-label={isFullscreen ? 'Exit fullscreen game' : 'Enter fullscreen game'}
+                  title={isFullscreen ? 'Exit fullscreen (Esc)' : 'Enter fullscreen'}
+                  className="border-l border-slate-800 pl-4 flex items-center gap-2 text-xs font-mono font-bold text-slate-300 hover:text-cyan-300 transition"
+                >
+                  {isFullscreen
+                    ? <Minimize2 className="w-4 h-4" />
+                    : <Maximize2 className="w-4 h-4" />}
+                  <span className="hidden xl:inline">{isFullscreen ? 'EXIT FULLSCREEN' : 'FULLSCREEN'}</span>
+                </button>
               </div>
             </div>
 
             {/* Game Canvas Viewport */}
-            <div className="relative rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950 flex items-center justify-center min-h-[460px]">
+            <div className={`relative rounded-2xl overflow-hidden border border-slate-800 shadow-2xl bg-slate-950 flex items-center justify-center ${
+              isFullscreen ? 'flex-1 min-h-0' : 'min-h-[460px]'
+            }`}>
               <canvas
                 ref={canvasRef}
-                style={{ minHeight: '440px', width: '100%', display: 'block', background: '#020617' }}
-                className="w-full h-auto cursor-crosshair select-none block"
+                style={{
+                  minHeight: isFullscreen ? undefined : '440px',
+                  width: '100%',
+                  height: isFullscreen ? '100%' : 'auto',
+                  display: 'block',
+                  background: '#020617'
+                }}
+                className="w-full cursor-crosshair select-none block"
               />
             </div>
 
             {/* Bottom Controls Legend */}
-            <div className="flex items-center justify-between text-xs text-slate-400 px-2 font-mono">
+            <div className={`flex items-center justify-between text-xs text-slate-400 px-2 font-mono ${
+              isFullscreen ? 'shrink-0' : ''
+            }`}>
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="px-2.5 py-1 rounded-lg bg-slate-800 text-cyan-300 font-bold flex items-center gap-1.5">
                   <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
@@ -1005,6 +1102,11 @@ export default function GameStation() {
                 AI Targets Hit: <span className="text-emerald-400 font-bold">{hudStats.hits}</span> / Shots: <span className="text-white font-bold">{hudStats.totalShots}</span>
               </div>
             </div>
+            {fullscreenError && (
+              <p role="alert" className="text-center text-xs font-mono text-rose-400">
+                {fullscreenError}
+              </p>
+            )}
           </div>
         )}
 
@@ -1152,6 +1254,12 @@ export default function GameStation() {
               </button>
             </div>
           </div>
+        )}
+
+        {fullscreenError && gameState !== STATES.PLAYING && (
+          <p role="alert" className="mt-3 text-center text-xs font-mono text-rose-400">
+            {fullscreenError}
+          </p>
         )}
 
       </div>

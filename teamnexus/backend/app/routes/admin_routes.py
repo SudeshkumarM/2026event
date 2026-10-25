@@ -282,7 +282,8 @@ def get_all_teams():
     # Fetch participants for each team
     for t in teams_data:
         cursor.execute("""
-            SELECT id, player_role, name, college, phone, roll_number, id_card_filename
+            SELECT id, player_role, name, college, phone, roll_number,
+                   id_card_filename, created_at
             FROM participants WHERE team_id = ?
             ORDER BY player_role ASC
         """, (t['id'],))
@@ -363,10 +364,34 @@ def view_id_card(filename):
     safe_filename = os.path.basename(filename)
     filepath = os.path.join(UPLOAD_FOLDER, safe_filename)
 
-    if not os.path.exists(filepath):
-        return jsonify({"success": False, "error": "ID card file not found."}), 404
+    if os.path.exists(filepath):
+        return send_file(filepath)
 
-    return send_file(filepath)
+    # Fallback: serve from DB blob (for camera-captured images)
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id_card_blob, id_card_data, id_card_mime
+        FROM participants WHERE id_card_filename = ? LIMIT 1
+    """, (safe_filename,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if row:
+        blob = row['id_card_blob']
+        data_url = row['id_card_data']
+        mime = row['id_card_mime'] or 'image/jpeg'
+        if blob:
+            from flask import Response
+            return Response(blob, mimetype=mime)
+        if data_url and ',' in data_url:
+            import base64
+            _, encoded = data_url.split(',', 1)
+            img_bytes = base64.b64decode(encoded)
+            from flask import Response
+            return Response(img_bytes, mimetype=mime)
+
+    return jsonify({"success": False, "error": "ID card file not found."}), 404
 
 
 @admin_bp.route('/id-card/purge-all', methods=['POST'])

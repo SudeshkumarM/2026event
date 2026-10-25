@@ -20,6 +20,7 @@ export default function AdminDashboard() {
 
   // Modals & Viewers
   const [viewingIdCard, setViewingIdCard] = useState(null);
+  const [viewingTeamDetails, setViewingTeamDetails] = useState(null);
   const [resetCodeModal, setResetCodeModal] = useState(null); // { team_code, new_code }
   const [actionSuccess, setActionSuccess] = useState(null);
   const [actionError, setActionError] = useState(null);
@@ -550,6 +551,15 @@ export default function AdminDashboard() {
 
                             {/* Reset Access Code */}
                             <button
+                              onClick={() => setViewingTeamDetails(t)}
+                              title="View Team and Player Details"
+                              className="p-1 rounded text-slate-400 hover:text-cyan-400 hover:bg-slate-800 transition"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+
+                            {/* Reset Access Code */}
+                            <button
                               onClick={() => handleResetAccessCode(t.id)}
                               title="Reset Game Access Code"
                               className="p-1 rounded text-slate-400 hover:text-amber-400 hover:bg-slate-800 transition"
@@ -579,6 +589,116 @@ export default function AdminDashboard() {
       </div>
 
       {/* MODAL 1: VIEW ID CARD (Authenticated Stream) */}
+      {viewingTeamDetails && (
+        <div className="fixed inset-0 z-40 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl max-w-3xl w-full p-6 shadow-2xl relative max-h-[90vh] overflow-y-auto">
+            <button
+              type="button"
+              onClick={() => setViewingTeamDetails(null)}
+              aria-label="Close team details"
+              className="absolute top-4 right-4 text-slate-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="mb-5 pr-8">
+              <div className="text-xs font-mono uppercase tracking-wider text-cyan-400">Admin-only registration details</div>
+              <h3 className="text-xl font-bold text-white mt-1">{viewingTeamDetails.team_name}</h3>
+              <p className="text-xs text-slate-400 font-mono mt-1">
+                {viewingTeamDetails.team_code} · Queue #{viewingTeamDetails.queue_number} · {viewingTeamDetails.status}
+              </p>
+              <p className="text-sm text-slate-300 mt-2">
+                {viewingTeamDetails.college_name || 'Institution not provided'}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {['PLAYER_1_AIM', 'PLAYER_2_SHOOT'].map((role) => {
+                const participant = viewingTeamDetails.participants?.find(player => player.player_role === role);
+                return (
+                  <section key={role} className="rounded-xl border border-slate-700 bg-slate-950 p-4">
+                    <h4 className="text-xs font-mono font-bold text-cyan-300 mb-3">
+                      {role === 'PLAYER_1_AIM' ? 'PLAYER 1 · AIM' : 'PLAYER 2 · SHOOT'}
+                    </h4>
+                    {participant ? (
+                      <dl className="space-y-2 text-sm">
+                        <div>
+                          <dt className="text-[10px] uppercase text-slate-500">Full name</dt>
+                          <dd className="text-white font-medium">{participant.name}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-[10px] uppercase text-slate-500">College / institution</dt>
+                          <dd className="text-slate-200">{participant.college || 'Not provided'}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-[10px] uppercase text-slate-500">Phone</dt>
+                          <dd className="text-slate-200 font-mono">{participant.phone || 'Not provided'}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-[10px] uppercase text-slate-500">Roll number</dt>
+                          <dd className="text-slate-200 font-mono">{participant.roll_number || 'Not provided'}</dd>
+                        </div>
+                        {participant.created_at && (
+                          <div>
+                            <dt className="text-[10px] uppercase text-slate-500">Registered</dt>
+                            <dd className="text-slate-400">{new Date(participant.created_at).toLocaleString()}</dd>
+                          </div>
+                        )}
+                        {participant.id_card_filename ? (
+                          <button
+                            type="button"
+                            onClick={() => setViewingIdCard({
+                              filename: participant.id_card_filename,
+                              name: `${participant.name} (${role === 'PLAYER_1_AIM' ? 'P1 Aim' : 'P2 Shoot'} - ${viewingTeamDetails.team_code})`
+                            })}
+                            className="mt-2 inline-flex items-center gap-1.5 text-xs font-bold text-cyan-400 hover:text-cyan-300"
+                          >
+                            <Eye className="w-3.5 h-3.5" /> View ID card image
+                          </button>
+                        ) : (
+                          <p className="text-xs text-amber-400 mt-2">ID card image unavailable or purged.</p>
+                        )}
+                      </dl>
+                    ) : (
+                      <p className="text-sm text-slate-500">No player details registered.</p>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+
+            <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-xs text-slate-300">
+              <div className="font-bold text-amber-300 mb-1">Passwords and game access</div>
+              <p>
+                Player passwords are not collected or stored. Game access codes are stored only as one-way hashes,
+                so an existing code cannot be viewed. Use “Reset Game Access Code” in the team actions to revoke
+                the old code and issue a replacement shown once.
+              </p>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  handleResetAccessCode(viewingTeamDetails.id);
+                  setViewingTeamDetails(null);
+                }}
+                className="px-4 py-2 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 text-xs font-bold"
+              >
+                Reset game access code
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewingTeamDetails(null)}
+                className="px-4 py-2 rounded-lg bg-slate-800 text-white hover:bg-slate-700 text-xs font-bold"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {viewingIdCard && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative">

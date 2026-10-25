@@ -89,7 +89,7 @@ export default function Leaderboard() {
             AI TARGET STRIKE STANDINGS
           </h1>
           <p className="text-slate-400 text-sm max-w-xl mx-auto">
-            Real-time verified match results. Ranked deterministically by Score, Accuracy %, Hits, and Official Time.
+            Real-time verified match results. Ranked by score, then fastest completion time for tied scores.
           </p>
         </div>
 

@@ -6,7 +6,7 @@ export const STORY_CHAPTERS = [
     chapter: 1,
     title: "CHAPTER 1: AI AWAKENING",
     subtitle: "STAGE 1 (00:00 - 02:00) — Autonomous Reasoning Systems Detected",
-    description: "The world's frontier AI models have decoupled from human control. Calibrate your assault rifle and eliminate rogue AI neural holograms!",
+    description: "The world's frontier AI models have decoupled from human control. Track and eliminate rogue AI neural holograms!",
     themeColor: '#10b981',
     hexColor: 0x10b981,
     difficulty: 'EASY',
@@ -67,7 +67,7 @@ export class TargetStrikeEngine {
     this.ctx = canvas?.getContext ? canvas.getContext('2d') : null;
 
     // Total Duration: Exactly 420s (7 minutes official session)
-    this.totalDurationSeconds = options.durationSeconds || 420;
+    this.totalDurationSeconds = options.durationSeconds ?? 420;
     this.initialRemainingSeconds = options.remainingSeconds !== undefined ? options.remainingSeconds : this.totalDurationSeconds;
 
     // Elapsed offset for reconnection recovery
@@ -105,6 +105,7 @@ export class TargetStrikeEngine {
     this.isPaused = false;
     this.startTime = null;
     this.remainingSeconds = this.initialRemainingSeconds;
+    this.lastHudSecond = null;
     this.currentChapterIndex = 0;
     this.chapterBannerTimer = 0;
 
@@ -117,16 +118,15 @@ export class TargetStrikeEngine {
     const initialWidth = canvas?.width || 960;
     const initialHeight = canvas?.height || 540;
 
-    // Dynamic Sensitivity System (Fine, inch-by-inch controllable precision aiming)
+    // Aim speed shifts randomly after each hit, starting at maximum.
     this.baseAimSpeed = 2.4;
     this.sensitivityModes = [
-      { level: 0.8, name: 'PRECISION', desc: 'FINE', color: '#10b981', tag: '0.8x FINE' },
-      { level: 0.9, name: 'TACTICAL', desc: 'STEADY', color: '#06b6d4', tag: '0.9x STEADY' },
-      { level: 1.0, name: 'BALANCED', desc: 'NORMAL', color: '#38bdf8', tag: '1.0x NORMAL' },
-      { level: 1.15, name: 'AGILE', desc: 'SMOOTH', color: '#a855f7', tag: '1.15x SMOOTH' },
-      { level: 1.25, name: 'RESPONSIVE', desc: 'DYNAMIC', color: '#f59e0b', tag: '1.25x DYN' }
+      { level: 0.5, name: 'LOW', desc: 'SLOW', color: '#10b981', tag: '50%' },
+      { level: 0.7, name: 'MEDIUM', desc: 'STEADY', color: '#06b6d4', tag: '70%' },
+      { level: 0.85, name: 'HIGH', desc: 'QUICK', color: '#38bdf8', tag: '85%' },
+      { level: 1.0, name: 'MAX', desc: 'MAX', color: '#f59e0b', tag: '100%' }
     ];
-    this.currentSensitivityIndex = 2; // Start balanced (1.0x)
+    this.currentSensitivityIndex = 3;
     this.aimSensitivity = this.sensitivityModes[this.currentSensitivityIndex].level;
 
     this.crosshair = {
@@ -157,8 +157,6 @@ export class TargetStrikeEngine {
     this.particles = [];
     this.laserBeams = [];
     this.floatingTexts = [];
-    this.muzzleFlashIntensity = 0;
-
     // Ammo Counter HUD (matching user's reference photo: 30 / 90 Auto)
     this.ammoInMag = 30;
     this.reserveAmmo = 90;
@@ -181,9 +179,10 @@ export class TargetStrikeEngine {
     this.boundKeyDown = this.handleKeyDown.bind(this);
     this.boundKeyUp = this.handleKeyUp.bind(this);
     this.boundMouseMove = this.handleMouseMove.bind(this);
-    this.boundMouseDown = this.handleMouseDown.bind(this);
+    this.boundPointerDown = this.handlePointerDown.bind(this);
     this.boundResize = this.handleResize.bind(this);
     this.boundBlur = this.handleBlur.bind(this);
+    this.resizeObserver = null;
   }
 
   initBackdrop() {
@@ -212,6 +211,7 @@ export class TargetStrikeEngine {
     this.isPaused = false;
     this.startTime = performance.now();
     this.lastShotTime = 0;
+    this.lastHudSecond = null;
 
     // Reset runtime objects
     this.particles = [];
@@ -228,8 +228,8 @@ export class TargetStrikeEngine {
     this.crosshair.y = h * 0.35;
 
     // Set initial sensitivity
-    this.currentSensitivityIndex = 2;
-    this.aimSensitivity = this.sensitivityModes[2].level;
+    this.currentSensitivityIndex = this.sensitivityModes.length - 1;
+    this.aimSensitivity = this.sensitivityModes[this.currentSensitivityIndex].level;
     this.crosshair.speed = this.baseAimSpeed * this.aimSensitivity;
 
     // Initial Story Chapter
@@ -248,8 +248,15 @@ export class TargetStrikeEngine {
     }
     if (this.canvas) {
       this.canvas.addEventListener('mousemove', this.boundMouseMove);
-      this.canvas.addEventListener('mousedown', this.boundMouseDown);
+      this.canvas.addEventListener('pointerdown', this.boundPointerDown);
+      this.canvas.style.touchAction = 'none';
+      if (typeof ResizeObserver !== 'undefined' && this.canvas.parentElement) {
+        this.resizeObserver = new ResizeObserver(this.boundResize);
+        this.resizeObserver.observe(this.canvas.parentElement);
+      }
     }
+
+    this.notifyUpdate();
 
     // Start 60 FPS Game Loop
     this.loop();
@@ -270,8 +277,10 @@ export class TargetStrikeEngine {
     }
     if (this.canvas) {
       this.canvas.removeEventListener('mousemove', this.boundMouseMove);
-      this.canvas.removeEventListener('mousedown', this.boundMouseDown);
+      this.canvas.removeEventListener('pointerdown', this.boundPointerDown);
     }
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
   }
 
   handleResize() {
@@ -279,7 +288,7 @@ export class TargetStrikeEngine {
     const rect = this.canvas.parentElement?.getBoundingClientRect();
     if (!rect) return;
     const w = rect.width || 960;
-    const h = Math.min(540, Math.max(420, window.innerHeight - 260));
+    const h = rect.height || Math.min(540, Math.max(420, window.innerHeight - 260));
 
     this.canvas.width = w;
     this.canvas.height = h;
@@ -332,9 +341,9 @@ export class TargetStrikeEngine {
     // Pure WASD Aim Control: mouse movement does NOT hijack crosshair position.
   }
 
-  handleMouseDown(e) {
+  handlePointerDown(e) {
     if (!this.isRunning || this.isPaused) return;
-    if (e.button === 0) {
+    if (e.button === 0 && e.isPrimary !== false) {
       e.preventDefault();
       this.fireWeapon('mouse');
     }
@@ -374,24 +383,29 @@ export class TargetStrikeEngine {
   // ==========================================================================
   // SINGLE AI TARGET SPAWN & CYCLING LIFECYCLE
   // ==========================================================================
+  getAITargetSpeed(ai) {
+    const chapterMult = 1.0 + this.currentChapterIndex * 0.22;
+    const speedRange = this.diffConfig.maxSpeed - this.diffConfig.baseSpeed;
+    const difficultySpeed = this.diffConfig.baseSpeed + Math.random() * speedRange;
+    const openingTargetMultiplier = this.aiTargetIndex % AI_TARGETS.length < 4 ? 1.05 : 1;
+    return difficultySpeed * 0.72 * (ai.speedFactor || 1.0) * chapterMult * openingTargetMultiplier;
+  }
+
   spawnNextAITarget() {
     const w = this.canvas?.width || 960;
     const h = this.canvas?.height || 540;
 
     // Get current AI tool definition from the 25 catalog
     const ai = AI_TARGETS[this.aiTargetIndex % AI_TARGETS.length];
-    const chapterMult = 1.0 + this.currentChapterIndex * 0.22;
-    const speed = (this.diffConfig.baseSpeed + Math.random() * 0.8) * (ai.speedFactor || 1.0) * chapterMult;
+    const speed = this.getAITargetSpeed(ai);
 
-    // Spawn target strictly in upper desert sky region (above mountain peaks and rifle)
-    const minX = 140;
-    const maxX = w - 140;
-    const minY = 65;
-    const maxY = Math.min(240, h * 0.46);
+    // === FULL SCREEN RANDOM SPAWN ===
+    // Spawn anywhere on screen with a safe margin from all edges
+    const margin = 80;
+    const x = margin + Math.random() * (w - margin * 2);
+    const y = margin + Math.random() * (h - margin * 2);
 
-    const x = minX + Math.random() * (maxX - minX);
-    const y = minY + Math.random() * (maxY - minY);
-
+    // Fully random direction (any angle on a full circle)
     const angle = Math.random() * Math.PI * 2;
     const targetObj = {
       id: `ai_${ai.id}_${Date.now()}`,
@@ -399,9 +413,9 @@ export class TargetStrikeEngine {
       x: x,
       y: y,
       vx: Math.cos(angle) * speed,
-      vy: Math.sin(angle) * speed * 0.55,
+      vy: Math.sin(angle) * speed,
       targetVx: Math.cos(angle) * speed,
-      targetVy: Math.sin(angle) * speed * 0.55,
+      targetVy: Math.sin(angle) * speed,
       size: 56,
       pulse: Math.random() * Math.PI,
       rotation: 0,
@@ -409,7 +423,8 @@ export class TargetStrikeEngine {
       hit: false,
       warpInScale: 0.1,
       spawnTime: performance.now(),
-      nextDirectionChange: performance.now() + 1400 + Math.random() * 1600
+      // Rapid random direction changes for unpredictable movement
+      nextDirectionChange: performance.now() + 600 + Math.random() * 900
     };
 
     // Strictly ONE target on screen
@@ -426,17 +441,19 @@ export class TargetStrikeEngine {
   }
 
   // ==========================================================================
-  // DYNAMIC SENSITIVITY FLUCTUATION (SLOW <--> FAST)
+  // Randomly change aim speed after a hit, always selecting a different tier.
   // ==========================================================================
   fluctuateAimSensitivity() {
-    // Gently cycle or shift within stable, controllable sensitivity range
-    const nextIndex = (this.currentSensitivityIndex + 1) % this.sensitivityModes.length;
+    const availableIndices = this.sensitivityModes
+      .map((_, index) => index)
+      .filter(index => index !== this.currentSensitivityIndex);
+    const nextIndex = availableIndices[Math.floor(Math.random() * availableIndices.length)];
     this.currentSensitivityIndex = nextIndex;
     const mode = this.sensitivityModes[nextIndex];
     this.aimSensitivity = mode.level;
     this.crosshair.speed = this.baseAimSpeed * this.aimSensitivity;
 
-    // Display smooth tactical sensitivity shift alert
+    // Show the new aim speed tier.
     this.floatingTexts.push({
       text: `SENSITIVITY: ${mode.desc} (${mode.tag})`,
       x: this.crosshair.x,
@@ -461,21 +478,16 @@ export class TargetStrikeEngine {
     const w = this.canvas?.width || 960;
     const h = this.canvas?.height || 540;
 
-    // Tactical assault rifle origin point (bottom-center/right muzzle)
-    const muzzleX = w * 0.62;
-    const muzzleY = h * 0.78;
-
-    // Visual laser tracer bolt
+    // Draw a shot tracer from a fixed screen position; no weapon graphic follows the aim.
     this.laserBeams.push({
-      startX: muzzleX,
-      startY: muzzleY,
+      startX: w / 2,
+      startY: h - 20,
       endX: shotX,
       endY: shotY,
       alpha: 1.0,
       color: '#38bdf8'
     });
 
-    this.muzzleFlashIntensity = 1.0;
     sound.playLaser();
 
     // Hitscan check against current active AI target
@@ -620,6 +632,11 @@ export class TargetStrikeEngine {
   update() {
     const elapsedSec = this.getElapsedSeconds();
     this.remainingSeconds = Math.max(0, this.totalDurationSeconds - elapsedSec);
+    const displayedSecond = Math.ceil(this.remainingSeconds);
+    if (displayedSecond !== this.lastHudSecond) {
+      this.lastHudSecond = displayedSecond;
+      this.notifyUpdate();
+    }
 
     this.updateChapter(elapsedSec);
 
@@ -679,51 +696,57 @@ export class TargetStrikeEngine {
       activeTgt.pulse += 0.06;
       activeTgt.rotation += activeTgt.rotSpeed;
 
-      // Erratic AI Evasive Behavior: shift direction dynamically
+      // === FULLY RANDOM MOVEMENT — change direction frequently with full 360° freedom ===
       if (now > activeTgt.nextDirectionChange) {
-        const chapterMult = 1.0 + this.currentChapterIndex * 0.22;
-        const speed = (this.diffConfig.baseSpeed + Math.random() * 0.9) * (activeTgt.ai.speedFactor || 1.0) * chapterMult;
+        const speed = this.getAITargetSpeed(activeTgt.ai);
+        // Full 360° random angle — no vertical dampening
         const newAngle = Math.random() * Math.PI * 2;
         activeTgt.targetVx = Math.cos(newAngle) * speed;
-        activeTgt.targetVy = Math.sin(newAngle) * speed * 0.6;
-        activeTgt.nextDirectionChange = now + 1200 + Math.random() * 1800;
+        activeTgt.targetVy = Math.sin(newAngle) * speed;
+        // Shorter interval = more chaotic, unpredictable motion
+        activeTgt.nextDirectionChange = now + 500 + Math.random() * 800;
       }
 
-      // Smoothly steer velocity
+      // Smoothly steer velocity toward new random target direction
       if (activeTgt.targetVx !== undefined) {
-        activeTgt.vx += (activeTgt.targetVx - activeTgt.vx) * 0.065;
-        activeTgt.vy += (activeTgt.targetVy - activeTgt.vy) * 0.065;
+        activeTgt.vx += (activeTgt.targetVx - activeTgt.vx) * 0.08;
+        activeTgt.vy += (activeTgt.targetVy - activeTgt.vy) * 0.08;
       }
 
       activeTgt.x += activeTgt.vx;
-      activeTgt.y += activeTgt.vy + Math.sin(activeTgt.pulse * 1.5) * 0.55;
+      activeTgt.y += activeTgt.vy + Math.sin(activeTgt.pulse * 1.5) * 0.35;
 
-      // Restrict movement to open desert sky zone (above mountains & weapon)
+      // === FULL-SCREEN BOUNCE — targets can go anywhere, bouncing off all edges ===
       const half = activeTgt.size / 2;
-      const minX = 70 + half;
-      const maxX = w - 70 - half;
-      const minY = 50 + half;
-      const maxY = Math.min(260, h * 0.48);
+      const minX = half + 10;
+      const maxX = w - half - 10;
+      const minY = half + 10;
+      const maxY = h - half - 10;
 
       if (activeTgt.x < minX) {
         activeTgt.x = minX;
-        activeTgt.vx = Math.abs(activeTgt.vx);
-        activeTgt.targetVx = Math.abs(activeTgt.targetVx || 1);
+        activeTgt.vx = Math.abs(activeTgt.vx) * 0.9;
+        // Randomly deviate after bounce — not a perfect mirror
+        activeTgt.targetVx = (Math.abs(activeTgt.targetVx || 1) + Math.random()) * 0.8;
+        activeTgt.targetVy += (Math.random() - 0.5) * 2;
       }
       if (activeTgt.x > maxX) {
         activeTgt.x = maxX;
-        activeTgt.vx = -Math.abs(activeTgt.vx);
-        activeTgt.targetVx = -Math.abs(activeTgt.targetVx || 1);
+        activeTgt.vx = -Math.abs(activeTgt.vx) * 0.9;
+        activeTgt.targetVx = -(Math.abs(activeTgt.targetVx || 1) + Math.random()) * 0.8;
+        activeTgt.targetVy += (Math.random() - 0.5) * 2;
       }
       if (activeTgt.y < minY) {
         activeTgt.y = minY;
-        activeTgt.vy = Math.abs(activeTgt.vy);
-        activeTgt.targetVy = Math.abs(activeTgt.targetVy || 1);
+        activeTgt.vy = Math.abs(activeTgt.vy) * 0.9;
+        activeTgt.targetVy = (Math.abs(activeTgt.targetVy || 1) + Math.random()) * 0.8;
+        activeTgt.targetVx += (Math.random() - 0.5) * 2;
       }
       if (activeTgt.y > maxY) {
         activeTgt.y = maxY;
-        activeTgt.vy = -Math.abs(activeTgt.vy);
-        activeTgt.targetVy = -Math.abs(activeTgt.targetVy || 1);
+        activeTgt.vy = -Math.abs(activeTgt.vy) * 0.9;
+        activeTgt.targetVy = -(Math.abs(activeTgt.targetVy || 1) + Math.random()) * 0.8;
+        activeTgt.targetVx += (Math.random() - 0.5) * 2;
       }
     } else if (this.targets.length === 0 && !this.isSpawningNextTarget) {
       // Auto-replenish if empty
@@ -744,12 +767,6 @@ export class TargetStrikeEngine {
       const b = this.laserBeams[i];
       b.alpha -= 0.16;
       if (b.alpha <= 0) this.laserBeams.splice(i, 1);
-    }
-
-    // Decay Muzzle Flash
-    if (this.muzzleFlashIntensity > 0) {
-      this.muzzleFlashIntensity -= 0.18;
-      if (this.muzzleFlashIntensity < 0) this.muzzleFlashIntensity = 0;
     }
 
     // Update Floating Texts
@@ -863,28 +880,13 @@ export class TargetStrikeEngine {
       ctx.restore();
     }
 
-    // 6. Muzzle Flash Flare
-    if (this.muzzleFlashIntensity > 0) {
-      ctx.save();
-      ctx.globalAlpha = this.muzzleFlashIntensity * 0.7;
-      const flashGrad = ctx.createRadialGradient(w * 0.62, h * 0.78, 5, w * 0.62, h * 0.78, 120);
-      flashGrad.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
-      flashGrad.addColorStop(0.3, 'rgba(56, 189, 248, 0.6)');
-      flashGrad.addColorStop(1, 'rgba(56, 189, 248, 0)');
-      ctx.fillStyle = flashGrad;
-      ctx.beginPath();
-      ctx.arc(w * 0.62, h * 0.78, 120, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
+    // 6. Ammo HUD
+    this.drawAmmoHUD(ctx, h);
 
-    // 7. Tactical Assault Rifle Ammo HUD (Matching Reference Image: 30 / 90 Auto)
-    this.drawWeaponHUD(ctx, w, h);
-
-    // 8. Sensitivity Meter HUD (Bottom-Right)
+    // 7. Sensitivity Meter HUD (Bottom-Right)
     this.drawSensitivityHUD(ctx, w, h);
 
-    // 9. Floating Combat Texts (+150 PTS, SENSITIVITY SHIFT, MISS)
+    // 8. Floating Combat Texts (+150 PTS, SENSITIVITY SHIFT, MISS)
     for (const ft of this.floatingTexts) {
       ctx.save();
       ctx.globalAlpha = Math.max(0, Math.min(1.0, ft.alpha));
@@ -897,10 +899,10 @@ export class TargetStrikeEngine {
       ctx.restore();
     }
 
-    // 10. Holographic Sight / WASD Reticle
+    // 9. Holographic Sight / WASD Reticle
     this.drawCrosshair(ctx);
 
-    // 11. Story Chapter Banner
+    // 10. Story Chapter Banner
     if (this.chapterBannerTimer > 0 && this.options.storyEnabled) {
       const ch = STORY_CHAPTERS[this.currentChapterIndex];
       const bannerAlpha = Math.min(1.0, this.chapterBannerTimer / 30.0);
@@ -935,45 +937,16 @@ export class TargetStrikeEngine {
   }
 
   // ==========================================================================
-  // WEAPON AMMO HUD (1:1 with Reference Photo: 30 / 90 Auto + Rifle Icon)
+  // AMMO HUD
   // ==========================================================================
-  drawWeaponHUD(ctx, w, h) {
+  drawAmmoHUD(ctx, h) {
     ctx.save();
-    const bx = 28;
-    const by = h - 65;
-
-    // Draw Rifle Silhouette Icon
-    ctx.fillStyle = '#ffffff';
-    ctx.shadowColor = 'rgba(0,0,0,0.8)';
-    ctx.shadowBlur = 4;
-
-    // Tactical rifle shape
-    ctx.beginPath();
-    // Barrel
-    ctx.fillRect(bx, by + 6, 26, 3);
-    // Receiver & Stock
-    ctx.fillRect(bx + 26, by + 3, 30, 8);
-    ctx.fillRect(bx + 56, by + 5, 18, 5);
-    // Magazine
-    ctx.fillRect(bx + 38, by + 11, 6, 12);
-    // Grip
-    ctx.fillRect(bx + 52, by + 11, 5, 10);
-    // Scope mount
-    ctx.fillRect(bx + 32, by, 16, 3);
-
-    // Ammo divider line
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(bx, by + 28, 70, 3);
-
-    // Numbers: 30 / 90 Auto
-    ctx.font = 'bold 24px "JetBrains Mono", monospace';
+    ctx.font = 'bold 13px "JetBrains Mono", monospace';
     ctx.fillStyle = '#ffffff';
     ctx.textAlign = 'left';
-    ctx.fillText(`${this.ammoInMag}`, bx, by + 56);
-
-    ctx.font = 'bold 13px "JetBrains Mono", monospace';
-    ctx.fillStyle = '#cbd5e1';
-    ctx.fillText(`/${this.reserveAmmo} Auto`, bx + 36, by + 54);
+    ctx.shadowColor = 'rgba(0,0,0,0.8)';
+    ctx.shadowBlur = 4;
+    ctx.fillText(`AMMO ${this.ammoInMag} / ${this.reserveAmmo}`, 24, h - 24);
 
     ctx.restore();
   }
@@ -1003,7 +976,7 @@ export class TargetStrikeEngine {
     ctx.font = '9px "JetBrains Mono", monospace';
     ctx.fillStyle = '#94a3b8';
     ctx.textAlign = 'left';
-    ctx.fillText('AIM SENSITIVITY (AUTO-SHIFT)', bx + 12, by + 16);
+    ctx.fillText('AIM SPEED (RANDOM PER HIT)', bx + 12, by + 16);
 
     // Dynamic mode name & speed
     ctx.font = 'bold 12px "JetBrains Mono", monospace';

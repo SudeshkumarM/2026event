@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import hashlib
 from datetime import datetime
 from config import Config
 
@@ -15,7 +16,7 @@ def get_db_connection():
     return conn
 
 def init_db(config=None):
-    config = config or Config
+    config = Config if config is None else config
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -85,10 +86,19 @@ def init_db(config=None):
             CHECK (status IN ('WAITING', 'CALLED', 'PRESENT', 'PLAYING', 'COMPLETED', 'SKIPPED', 'CANCELLED')),
         called_at TIMESTAMP NULL,
         call_deadline TIMESTAMP NULL,
+        is_test INTEGER NOT NULL DEFAULT 0 CHECK (is_test IN (0, 1)),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
+    cursor.execute("PRAGMA table_info(teams);")
+    team_columns = {row[1] for row in cursor.fetchall()}
+    if "is_test" not in team_columns:
+        cursor.execute(
+            "ALTER TABLE teams ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0 "
+            "CHECK (is_test IN (0, 1));"
+        )
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_teams_is_test_status ON teams(is_test, status);")
 
     # 3. Participants Table (Exactly 2 players per team)
     cursor.execute("""
@@ -101,6 +111,9 @@ def init_db(config=None):
         phone TEXT NOT NULL,
         roll_number TEXT NOT NULL,
         id_card_filename TEXT NULL,
+        id_card_blob BLOB NULL,
+        id_card_data TEXT NULL,
+        id_card_mime TEXT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
@@ -119,6 +132,29 @@ def init_db(config=None):
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_access_credentials_team ON access_credentials(team_id);")
 
+    # Local dev uses SQLite, so create the same ten test credentials as sql.md.
+    # Negative queue numbers keep the fixtures behind normal registrations.
+    cursor.execute("SELECT COALESCE(MIN(queue_number), 0) FROM teams WHERE is_test = 0;")
+    first_test_queue = cursor.fetchone()[0]
+    for number in range(1, 11):
+        test_code = f"ATS-TEST-{number:03d}"
+        cursor.execute("""
+            INSERT OR IGNORE INTO teams (
+                team_code, team_name, college_name, queue_number, status, is_test
+            ) VALUES (?, ?, 'TEST ONLY', ?, 'WAITING', 1)
+        """, (test_code, f"Test Team {number:03d}", first_test_queue - number))
+        cursor.execute("SELECT id FROM teams WHERE team_code = ?;", (test_code,))
+        test_team_id = cursor.fetchone()["id"]
+        code_hash = hashlib.sha256(test_code.encode("utf-8")).hexdigest()
+        cursor.execute("""
+            INSERT INTO access_credentials (team_id, credential_hash)
+            SELECT ?, ?
+            WHERE NOT EXISTS (
+                SELECT 1 FROM access_credentials
+                WHERE team_id = ? AND credential_hash = ?
+            )
+        """, (test_team_id, code_hash, test_team_id, code_hash))
+
     # 5. Private Documents Table (Secure ID Storage Metadata)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS private_documents (
@@ -126,6 +162,9 @@ def init_db(config=None):
         participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
         private_storage_key TEXT NOT NULL,
         verification_status TEXT NOT NULL DEFAULT 'PENDING' CHECK (verification_status IN ('PENDING', 'VERIFIED', 'REJECTED')),
+        image_blob BLOB NULL,
+        image_data TEXT NULL,
+        mime_type TEXT NULL,
         uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         retention_until TIMESTAMP NULL
     );
@@ -218,6 +257,23 @@ def init_db(config=None):
             pwd_hash = generate_password_hash(admin_password, method="scrypt")
             cursor.execute("INSERT INTO admin_users (username, password_hash, role) VALUES (?, ?, ?);",
                            (admin_username, pwd_hash, 'ADMIN'))
+
+    # Ensure dynamic column migrations for ID card images
+    def add_col_if_missing(table, col, col_def):
+        cursor.execute(f"PRAGMA table_info({table});")
+        cols = [r[1] for r in cursor.fetchall()]
+        if col not in cols:
+            try:
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def};")
+            except Exception as e:
+                print(f"Notice: {table}.{col} column check: {e}")
+
+    add_col_if_missing("participants", "id_card_blob", "BLOB NULL")
+    add_col_if_missing("participants", "id_card_data", "TEXT NULL")
+    add_col_if_missing("participants", "id_card_mime", "TEXT NULL")
+    add_col_if_missing("private_documents", "image_blob", "BLOB NULL")
+    add_col_if_missing("private_documents", "image_data", "TEXT NULL")
+    add_col_if_missing("private_documents", "mime_type", "TEXT NULL")
 
     conn.commit()
     conn.close()

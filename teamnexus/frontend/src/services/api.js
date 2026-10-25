@@ -154,6 +154,13 @@ class ApiService {
     return this.request(`/game/session/status?session_token=${encodeURIComponent(sessionToken)}`);
   }
 
+  async startGameSession(sessionToken) {
+    return this.request('/game/session/start', {
+      method: 'POST',
+      body: JSON.stringify({ session_token: sessionToken })
+    });
+  }
+
   async getPublicQueue() {
     return this.request('/queue/public');
   }

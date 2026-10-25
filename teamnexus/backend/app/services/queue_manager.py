@@ -15,7 +15,7 @@ class QueueManager:
         cursor.execute("""
             SELECT id, team_code, team_name, call_deadline, status 
             FROM teams 
-            WHERE status = 'CALLED'
+            WHERE status = 'CALLED' AND is_test = 0
         """)
         called_team = cursor.fetchone()
         
@@ -43,7 +43,7 @@ class QueueManager:
         cursor.execute("""
             SELECT id, team_code, team_name, queue_number, status
             FROM teams
-            WHERE status IN ('PLAYING', 'PRESENT')
+            WHERE status IN ('PLAYING', 'PRESENT') AND is_test = 0
             ORDER BY updated_at DESC LIMIT 1
         """)
         now_playing = cursor.fetchone()
@@ -52,7 +52,7 @@ class QueueManager:
         cursor.execute("""
             SELECT id, team_code, team_name, queue_number, status, called_at, call_deadline
             FROM teams
-            WHERE status = 'CALLED'
+            WHERE status = 'CALLED' AND is_test = 0
             ORDER BY called_at ASC LIMIT 1
         """)
         currently_called = cursor.fetchone()
@@ -61,7 +61,7 @@ class QueueManager:
         cursor.execute("""
             SELECT id, team_code, team_name, queue_number, status
             FROM teams
-            WHERE status = 'WAITING'
+            WHERE status = 'WAITING' AND is_test = 0
             ORDER BY queue_number ASC LIMIT 1
         """)
         next_waiting = cursor.fetchone()
@@ -70,13 +70,18 @@ class QueueManager:
         cursor.execute("""
             SELECT id, team_code, team_name, queue_number, status
             FROM teams
-            WHERE status = 'WAITING'
+            WHERE status = 'WAITING' AND is_test = 0
             ORDER BY queue_number ASC LIMIT 8
         """)
         upcoming_rows = cursor.fetchall()
 
         # Total counts
-        cursor.execute("SELECT status, COUNT(*) as count FROM teams GROUP BY status")
+        cursor.execute("""
+            SELECT status, COUNT(*) as count
+            FROM teams
+            WHERE is_test = 0
+            GROUP BY status
+        """)
         status_counts = {row['status']: row['count'] for row in cursor.fetchall()}
 
         return {

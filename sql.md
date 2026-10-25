@@ -1,243 +1,298 @@
--- ============================================================================
--- AI TARGET STRIKE 2026 — SUPABASE POSTGRESQL PRODUCTION DATABASE SCHEMA
--- ============================================================================
--- Instructions:
--- 1. Open your Supabase Project Dashboard (https://app.supabase.com)
--- 2. Go to "SQL Editor" from the left sidebar
--- 3. Click "+ New query"
--- 4. Paste the entire content of this file and click "Run" (or Ctrl + Enter)
--- ============================================================================
+-- AI Target Strike 2026 - Supabase SQL Editor Setup
+--
+-- Run this entire file in Supabase: open SQL Editor, create a new query,
+-- paste the file contents, and run it.
+--
+-- This creates the PostgreSQL schema, seeds event configuration, and creates
+-- exactly ten test game access codes.
+--
+-- Keep the service_role key on the server only. Never put it in the frontend,
+-- commit it, or share it. The anon key is not a database password.
+--
+-- Participant details, ID-card images, access-code hashes, and session tokens
+-- are private. Public clients can read only the limited competition views
+-- defined below. The Flask backend must connect using a server-side
+-- service_role key (or another trusted server-side database role).
+--
+-- IMPORTANT: Running this SQL creates the Supabase schema, but does not move
+-- application data or switch the Flask backend from its current SQLite
+-- connection. The backend database access layer must be migrated to PostgreSQL
+-- before the running app will use this Supabase database.
+--
+-- Test game access codes (each is also the associated test team's code):
+-- ATS-TEST-001
+-- ATS-TEST-002
+-- ATS-TEST-003
+-- ATS-TEST-004
+-- ATS-TEST-005
+-- ATS-TEST-006
+-- ATS-TEST-007
+-- ATS-TEST-008
+-- ATS-TEST-009
+-- ATS-TEST-010
+--
+-- Only SHA-256 hashes of these codes are stored. Test teams are marked
+-- is_test = TRUE and excluded from the public queue and leaderboard views.
+-- These predictable codes are for testing only, not live competition.
+--
+-- The script intentionally does not create a default admin password. Configure
+-- an admin account through the trusted backend using a securely generated
+-- password hash; never insert a plaintext password or sample hash.
 
--- 0. Enable required extensions
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+BEGIN;
 
--- ============================================================================
--- 1. SYSTEM CONFIGURATION TABLE
--- ============================================================================
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE TABLE IF NOT EXISTS public.system_config (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     event_name TEXT NOT NULL DEFAULT 'AI TARGET STRIKE 2026',
-    game_mode TEXT NOT NULL DEFAULT 'MODE_TIME' CHECK (game_mode IN ('MODE_TARGETS', 'MODE_TIME')),
-    target_count INTEGER NOT NULL DEFAULT 20,
-    game_duration INTEGER NOT NULL DEFAULT 420, -- 7 minutes official match
+    game_mode TEXT NOT NULL DEFAULT 'MODE_TARGETS'
+        CHECK (game_mode IN ('MODE_TARGETS', 'MODE_TIME')),
+    target_count INTEGER NOT NULL DEFAULT 20 CHECK (target_count > 0),
+    game_duration INTEGER NOT NULL DEFAULT 420 CHECK (game_duration > 0),
     base_target_speed REAL NOT NULL DEFAULT 3.2,
     max_target_speed REAL NOT NULL DEFAULT 7.5,
     min_target_size INTEGER NOT NULL DEFAULT 38,
     max_target_size INTEGER NOT NULL DEFAULT 64,
     score_per_hit INTEGER NOT NULL DEFAULT 100,
-    combo_enabled INTEGER NOT NULL DEFAULT 1,
-    queue_timeout_seconds INTEGER NOT NULL DEFAULT 45,
-    competition_mode TEXT NOT NULL DEFAULT 'COMPETITION' CHECK (competition_mode IN ('PRACTICE', 'COMPETITION', 'TEST')),
-    difficulty TEXT NOT NULL DEFAULT 'MEDIUM' CHECK (difficulty IN ('EASY', 'MEDIUM', 'HARD')),
-    difficulty_mode TEXT NOT NULL DEFAULT 'EVENT_LOCKED' CHECK (difficulty_mode IN ('EVENT_LOCKED', 'TEAM_SELECTS', 'ADMIN_ASSIGNS')),
-    operating_mode TEXT NOT NULL DEFAULT 'OPERATOR_CONTROLLED' CHECK (operating_mode IN ('OPERATOR_CONTROLLED', 'SELF_SERVICE')),
-    story_enabled INTEGER NOT NULL DEFAULT 1,
-    registration_open INTEGER NOT NULL DEFAULT 1,
-    event_active INTEGER NOT NULL DEFAULT 1,
-    event_password_hash TEXT NULL,
-    event_password_enabled INTEGER NOT NULL DEFAULT 1,
+    combo_enabled SMALLINT NOT NULL DEFAULT 1 CHECK (combo_enabled IN (0, 1)),
+    queue_timeout_seconds INTEGER NOT NULL DEFAULT 30 CHECK (queue_timeout_seconds > 0),
+    competition_mode TEXT NOT NULL DEFAULT 'COMPETITION'
+        CHECK (competition_mode IN ('PRACTICE', 'COMPETITION', 'TEST')),
+    difficulty TEXT NOT NULL DEFAULT 'MEDIUM'
+        CHECK (difficulty IN ('EASY', 'MEDIUM', 'HARD')),
+    difficulty_mode TEXT NOT NULL DEFAULT 'EVENT_LOCKED'
+        CHECK (difficulty_mode IN ('EVENT_LOCKED', 'TEAM_SELECTS', 'ADMIN_ASSIGNS')),
+    operating_mode TEXT NOT NULL DEFAULT 'OPERATOR_CONTROLLED'
+        CHECK (operating_mode IN ('OPERATOR_CONTROLLED', 'SELF_SERVICE')),
+    story_enabled SMALLINT NOT NULL DEFAULT 1 CHECK (story_enabled IN (0, 1)),
+    registration_open SMALLINT NOT NULL DEFAULT 1 CHECK (registration_open IN (0, 1)),
+    event_active SMALLINT NOT NULL DEFAULT 1 CHECK (event_active IN (0, 1)),
+    event_password_hash TEXT,
+    event_password_enabled SMALLINT NOT NULL DEFAULT 0 CHECK (event_password_enabled IN (0, 1)),
     tie_breaker_rule TEXT NOT NULL DEFAULT 'ACCURACY_THEN_TIME',
-    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- ============================================================================
--- 2. TEAMS TABLE
--- ============================================================================
 CREATE TABLE IF NOT EXISTS public.teams (
     id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    team_code TEXT UNIQUE NOT NULL,
+    team_code TEXT NOT NULL UNIQUE,
     team_name TEXT NOT NULL,
-    college_name TEXT NULL,
-    queue_number INTEGER UNIQUE NOT NULL,
-    status TEXT NOT NULL DEFAULT 'WAITING' 
+    college_name TEXT,
+    queue_number INTEGER NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'WAITING'
         CHECK (status IN ('WAITING', 'CALLED', 'PRESENT', 'PLAYING', 'COMPLETED', 'SKIPPED', 'CANCELLED')),
-    called_at TIMESTAMPTZ NULL,
-    call_deadline TIMESTAMPTZ NULL,
-    is_test INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+    called_at TIMESTAMPTZ,
+    call_deadline TIMESTAMPTZ,
+    is_test BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_teams_status ON public.teams(status);
-CREATE INDEX IF NOT EXISTS idx_teams_queue_number ON public.teams(queue_number);
-CREATE INDEX IF NOT EXISTS idx_teams_team_code ON public.teams(team_code);
+CREATE INDEX IF NOT EXISTS idx_teams_status_queue
+    ON public.teams (status, queue_number);
+CREATE INDEX IF NOT EXISTS idx_teams_test_status
+    ON public.teams (is_test, status);
 
--- ============================================================================
--- 3. PARTICIPANTS TABLE (Exactly 2 players per team)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS public.participants (
     id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
     team_id BIGINT NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
-    player_role TEXT NOT NULL CHECK (player_role IN ('PLAYER_1_AIM', 'PLAYER_2_SHOOT')),
+    player_role TEXT NOT NULL
+        CHECK (player_role IN ('PLAYER_1_AIM', 'PLAYER_2_SHOOT')),
     name TEXT NOT NULL,
     college TEXT NOT NULL,
     phone TEXT NOT NULL,
-    roll_number TEXT NULL,
-    id_card_filename TEXT NULL,
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+    roll_number TEXT,
+    id_card_filename TEXT,
+    id_card_blob BYTEA,
+    id_card_data TEXT,
+    id_card_mime TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (team_id, player_role)
 );
 
-CREATE INDEX IF NOT EXISTS idx_participants_team_id ON public.participants(team_id);
-CREATE INDEX IF NOT EXISTS idx_participants_phone ON public.participants(phone);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_phone_unique
+    ON public.participants (phone);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_participants_roll_number_unique
+    ON public.participants (roll_number)
+    WHERE roll_number IS NOT NULL AND btrim(roll_number) <> '';
 
--- ============================================================================
--- 4. ACCESS CREDENTIALS TABLE (Hashed Secret Game Codes)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS public.access_credentials (
     id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
     team_id BIGINT NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
-    credential_hash TEXT NOT NULL,
-    issued_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
-    expires_at TIMESTAMPTZ NULL,
-    revoked_at TIMESTAMPTZ NULL,
-    used_at TIMESTAMPTZ NULL
+    credential_hash TEXT NOT NULL UNIQUE,
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    used_at TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS idx_access_credentials_team ON public.access_credentials(team_id);
-CREATE INDEX IF NOT EXISTS idx_access_credentials_hash ON public.access_credentials(credential_hash);
+CREATE INDEX IF NOT EXISTS idx_access_credentials_team
+    ON public.access_credentials (team_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_access_credentials_hash_unique
+    ON public.access_credentials (credential_hash);
 
--- ============================================================================
--- 5. PRIVATE DOCUMENTS TABLE (ID Card Security Metadata)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS public.private_documents (
     id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
     participant_id BIGINT NOT NULL REFERENCES public.participants(id) ON DELETE CASCADE,
     private_storage_key TEXT NOT NULL,
-    verification_status TEXT NOT NULL DEFAULT 'PENDING' 
+    verification_status TEXT NOT NULL DEFAULT 'PENDING'
         CHECK (verification_status IN ('PENDING', 'VERIFIED', 'REJECTED')),
-    uploaded_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL,
-    retention_until TIMESTAMPTZ NULL
+    image_blob BYTEA,
+    image_data TEXT,
+    mime_type TEXT,
+    uploaded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    retention_until TIMESTAMPTZ
 );
 
-CREATE INDEX IF NOT EXISTS idx_private_docs_participant ON public.private_documents(participant_id);
+CREATE INDEX IF NOT EXISTS idx_private_documents_participant
+    ON public.private_documents (participant_id);
 
--- ============================================================================
--- 6. GAME SESSIONS TABLE
--- ============================================================================
 CREATE TABLE IF NOT EXISTS public.game_sessions (
     id TEXT PRIMARY KEY,
     team_id BIGINT NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
-    status TEXT NOT NULL DEFAULT 'INITIATED' 
+    status TEXT NOT NULL DEFAULT 'INITIATED'
         CHECK (status IN ('INITIATED', 'COUNTDOWN', 'PLAYING', 'COMPLETED', 'ABORTED', 'INVALIDATED')),
     session_token TEXT NOT NULL UNIQUE,
     mode TEXT NOT NULL,
-    difficulty TEXT NOT NULL DEFAULT 'MEDIUM',
+    difficulty TEXT NOT NULL DEFAULT 'MEDIUM'
+        CHECK (difficulty IN ('EASY', 'MEDIUM', 'HARD')),
     config_snapshot TEXT NOT NULL,
-    started_at TIMESTAMPTZ NULL,
-    scheduled_end_at TIMESTAMPTZ NULL,
-    ended_at TIMESTAMPTZ NULL,
-    duration_ms INTEGER NULL,
-    total_shots INTEGER DEFAULT 0,
-    total_hits INTEGER DEFAULT 0,
-    total_misses INTEGER DEFAULT 0,
-    total_score INTEGER DEFAULT 0,
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+    started_at TIMESTAMPTZ,
+    scheduled_end_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ,
+    duration_ms INTEGER CHECK (duration_ms IS NULL OR duration_ms >= 0),
+    total_shots INTEGER NOT NULL DEFAULT 0 CHECK (total_shots >= 0),
+    total_hits INTEGER NOT NULL DEFAULT 0 CHECK (total_hits >= 0),
+    total_misses INTEGER NOT NULL DEFAULT 0 CHECK (total_misses >= 0),
+    total_score INTEGER NOT NULL DEFAULT 0 CHECK (total_score >= 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_game_sessions_team_id ON public.game_sessions(team_id);
-CREATE INDEX IF NOT EXISTS idx_game_sessions_token ON public.game_sessions(session_token);
-CREATE INDEX IF NOT EXISTS idx_game_sessions_status ON public.game_sessions(status);
+CREATE INDEX IF NOT EXISTS idx_game_sessions_team
+    ON public.game_sessions (team_id);
+CREATE INDEX IF NOT EXISTS idx_game_sessions_status
+    ON public.game_sessions (status);
 
--- ============================================================================
--- 7. GAME RESULTS TABLE (Official Leaderboard Scores)
--- ============================================================================
 CREATE TABLE IF NOT EXISTS public.game_results (
     id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    game_session_id TEXT UNIQUE NOT NULL REFERENCES public.game_sessions(id) ON DELETE CASCADE,
+    game_session_id TEXT NOT NULL UNIQUE REFERENCES public.game_sessions(id) ON DELETE CASCADE,
     team_id BIGINT NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
-    difficulty TEXT NOT NULL DEFAULT 'MEDIUM',
+    difficulty TEXT NOT NULL DEFAULT 'MEDIUM'
+        CHECK (difficulty IN ('EASY', 'MEDIUM', 'HARD')),
     score INTEGER NOT NULL CHECK (score >= 0),
     hits INTEGER NOT NULL CHECK (hits >= 0),
     misses INTEGER NOT NULL CHECK (misses >= 0),
     accuracy REAL NOT NULL CHECK (accuracy >= 0.0 AND accuracy <= 100.0),
-    best_combo INTEGER NOT NULL DEFAULT 0,
-    targets_destroyed INTEGER NOT NULL DEFAULT 0,
-    completion_time_ms INTEGER NOT NULL,
-    is_official INTEGER NOT NULL DEFAULT 1,
-    verified_by_server INTEGER NOT NULL DEFAULT 1,
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+    best_combo INTEGER NOT NULL DEFAULT 0 CHECK (best_combo >= 0),
+    targets_destroyed INTEGER NOT NULL DEFAULT 0 CHECK (targets_destroyed >= 0),
+    completion_time_ms INTEGER NOT NULL CHECK (completion_time_ms >= 0),
+    is_official SMALLINT NOT NULL DEFAULT 1 CHECK (is_official IN (0, 1)),
+    verified_by_server SMALLINT NOT NULL DEFAULT 1 CHECK (verified_by_server IN (0, 1)),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_game_results_team_id ON public.game_results(team_id);
-CREATE INDEX IF NOT EXISTS idx_game_results_ranking ON public.game_results(score DESC, accuracy DESC, hits DESC, completion_time_ms ASC);
+CREATE INDEX IF NOT EXISTS idx_game_results_team
+    ON public.game_results (team_id);
+CREATE INDEX IF NOT EXISTS idx_game_results_ranking
+    ON public.game_results (score DESC, completion_time_ms ASC, accuracy DESC, hits DESC);
 
--- ============================================================================
--- 8. QUEUE EVENT LOGS TABLE
--- ============================================================================
 CREATE TABLE IF NOT EXISTS public.queue_events (
     id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
     team_id BIGINT NOT NULL REFERENCES public.teams(id) ON DELETE CASCADE,
     event_type TEXT NOT NULL,
-    details TEXT NULL,
-    triggered_by TEXT DEFAULT 'SYSTEM',
-    timestamp TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+    details TEXT,
+    triggered_by TEXT NOT NULL DEFAULT 'SYSTEM',
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_queue_events_team_id ON public.queue_events(team_id);
+CREATE INDEX IF NOT EXISTS idx_queue_events_team_time
+    ON public.queue_events (team_id, timestamp DESC);
 
--- ============================================================================
--- 9. ADMIN USERS TABLE
--- ============================================================================
 CREATE TABLE IF NOT EXISTS public.admin_users (
     id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-    username TEXT UNIQUE NOT NULL,
+    username TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'ADMIN' CHECK (role IN ('ADMIN', 'OPERATOR', 'VIEWER')),
-    created_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+    role TEXT NOT NULL DEFAULT 'ADMIN'
+        CHECK (role IN ('ADMIN', 'OPERATOR', 'VIEWER')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- ============================================================================
--- 10. AUDIT LOGS TABLE
--- ============================================================================
 CREATE TABLE IF NOT EXISTS public.audit_logs (
     id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
     actor TEXT NOT NULL DEFAULT 'SYSTEM',
     action TEXT NOT NULL,
     entity_type TEXT NOT NULL,
-    entity_id TEXT NULL,
-    metadata TEXT NULL,
-    timestamp TIMESTAMPTZ DEFAULT timezone('utc'::text, now()) NOT NULL
+    entity_id TEXT,
+    metadata TEXT,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- ============================================================================
--- 11. SUPABASE REALTIME REPLICATION CONFIGURATION
--- ============================================================================
--- Enables instant live WebSocket updates for Leaderboard & Projector Queue!
-DO $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND tablename = 'teams'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.teams;
-    END IF;
+-- Keep schemas created by earlier versions compatible with the current app.
+ALTER TABLE public.teams
+    ADD COLUMN IF NOT EXISTS is_test BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE public.participants
+    ADD COLUMN IF NOT EXISTS id_card_blob BYTEA,
+    ADD COLUMN IF NOT EXISTS id_card_data TEXT,
+    ADD COLUMN IF NOT EXISTS id_card_mime TEXT;
+ALTER TABLE public.private_documents
+    ADD COLUMN IF NOT EXISTS image_blob BYTEA,
+    ADD COLUMN IF NOT EXISTS image_data TEXT,
+    ADD COLUMN IF NOT EXISTS mime_type TEXT;
 
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND tablename = 'game_sessions'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.game_sessions;
-    END IF;
+INSERT INTO public.system_config (id)
+VALUES (1)
+ON CONFLICT (id) DO NOTHING;
 
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND tablename = 'game_results'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.game_results;
-    END IF;
+-- Public, PII-free views. Base tables remain unavailable to public roles.
+CREATE OR REPLACE VIEW public.vw_public_event_config AS
+SELECT
+    event_name,
+    game_mode,
+    target_count,
+    game_duration,
+    difficulty,
+    difficulty_mode,
+    operating_mode,
+    competition_mode,
+    story_enabled,
+    registration_open,
+    event_active,
+    event_password_enabled,
+    tie_breaker_rule
+FROM public.system_config
+WHERE id = 1;
 
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND tablename = 'system_config'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE public.system_config;
-    END IF;
-END $$;
+CREATE OR REPLACE VIEW public.vw_public_queue AS
+SELECT team_code, team_name, queue_number, status, called_at, call_deadline
+FROM public.teams
+WHERE is_test = FALSE
+  AND status IN ('WAITING', 'CALLED', 'PRESENT', 'PLAYING');
 
--- ============================================================================
--- 12. ROW LEVEL SECURITY (RLS) POLICIES
--- ============================================================================
+CREATE OR REPLACE VIEW public.vw_public_leaderboard AS
+SELECT
+    t.team_code,
+    t.team_name,
+    t.college_name,
+    r.difficulty,
+    r.score,
+    r.hits,
+    r.misses,
+    r.accuracy,
+    r.best_combo,
+    r.targets_destroyed,
+    round(r.completion_time_ms / 1000.0, 1) AS duration_seconds,
+    r.created_at,
+    dense_rank() OVER (
+        ORDER BY r.score DESC, r.completion_time_ms ASC, r.accuracy DESC, r.hits DESC
+    ) AS rank
+FROM public.game_results AS r
+JOIN public.teams AS t ON t.id = r.team_id
+WHERE r.is_official = 1
+  AND t.is_test = FALSE;
+
+-- Do not expose participant, credential, session, or operational tables to
+-- browser roles. The trusted server uses service_role and must never expose it.
 ALTER TABLE public.system_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.teams ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.participants ENABLE ROW LEVEL SECURITY;
@@ -249,89 +304,98 @@ ALTER TABLE public.queue_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.admin_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 
--- Allow public read of public competition screens
-CREATE POLICY "Public read for system config" ON public.system_config FOR SELECT USING (true);
-CREATE POLICY "Public read for non-cancelled teams" ON public.teams FOR SELECT USING (status != 'CANCELLED');
-CREATE POLICY "Public read for official game results" ON public.game_results FOR SELECT USING (is_official = 1);
-CREATE POLICY "Public read for active game sessions" ON public.game_sessions FOR SELECT USING (true);
-CREATE POLICY "Public read for queue events" ON public.queue_events FOR SELECT USING (true);
+-- Remove permissive policies from previous versions of this schema.
+DROP POLICY IF EXISTS "Public read for system config" ON public.system_config;
+DROP POLICY IF EXISTS "Public read for non-cancelled teams" ON public.teams;
+DROP POLICY IF EXISTS "Public read for official game results" ON public.game_results;
+DROP POLICY IF EXISTS "Public read for active game sessions" ON public.game_sessions;
+DROP POLICY IF EXISTS "Public read for queue events" ON public.queue_events;
+DROP POLICY IF EXISTS "Service Role full access system_config" ON public.system_config;
+DROP POLICY IF EXISTS "Service Role full access teams" ON public.teams;
+DROP POLICY IF EXISTS "Service Role full access participants" ON public.participants;
+DROP POLICY IF EXISTS "Service Role full access access_credentials" ON public.access_credentials;
+DROP POLICY IF EXISTS "Service Role full access private_documents" ON public.private_documents;
+DROP POLICY IF EXISTS "Service Role full access game_sessions" ON public.game_sessions;
+DROP POLICY IF EXISTS "Service Role full access game_results" ON public.game_results;
+DROP POLICY IF EXISTS "Service Role full access queue_events" ON public.queue_events;
+DROP POLICY IF EXISTS "Service Role full access admin_users" ON public.admin_users;
+DROP POLICY IF EXISTS "Service Role full access audit_logs" ON public.audit_logs;
 
--- Backend Service Role has full bypass/access for all operational mutations
-CREATE POLICY "Service Role full access system_config" ON public.system_config FOR ALL USING (true);
-CREATE POLICY "Service Role full access teams" ON public.teams FOR ALL USING (true);
-CREATE POLICY "Service Role full access participants" ON public.participants FOR ALL USING (true);
-CREATE POLICY "Service Role full access access_credentials" ON public.access_credentials FOR ALL USING (true);
-CREATE POLICY "Service Role full access private_documents" ON public.private_documents FOR ALL USING (true);
-CREATE POLICY "Service Role full access game_sessions" ON public.game_sessions FOR ALL USING (true);
-CREATE POLICY "Service Role full access game_results" ON public.game_results FOR ALL USING (true);
-CREATE POLICY "Service Role full access queue_events" ON public.queue_events FOR ALL USING (true);
-CREATE POLICY "Service Role full access admin_users" ON public.admin_users FOR ALL USING (true);
-CREATE POLICY "Service Role full access audit_logs" ON public.audit_logs FOR ALL USING (true);
+REVOKE ALL PRIVILEGES ON TABLE
+    public.system_config,
+    public.teams,
+    public.participants,
+    public.access_credentials,
+    public.private_documents,
+    public.game_sessions,
+    public.game_results,
+    public.queue_events,
+    public.admin_users,
+    public.audit_logs
+FROM anon, authenticated;
 
--- ============================================================================
--- 13. CONVENIENT VIEWS FOR LEADERBOARD & QUEUE
--- ============================================================================
-CREATE OR REPLACE VIEW public.vw_public_leaderboard AS
-SELECT 
-    t.team_code,
-    t.team_name,
-    t.college_name,
-    r.difficulty,
-    r.score,
-    r.hits,
-    r.misses,
-    r.accuracy,
-    r.best_combo,
-    r.targets_destroyed,
-    ROUND(r.completion_time_ms / 1000.0, 1) AS duration_seconds,
-    r.created_at,
-    DENSE_RANK() OVER (ORDER BY r.score DESC, r.accuracy DESC, r.hits DESC, r.completion_time_ms ASC) AS rank
-FROM public.game_results r
-JOIN public.teams t ON r.team_id = t.id
-WHERE r.is_official = 1 AND t.is_test = 0;
+GRANT SELECT ON TABLE
+    public.vw_public_event_config,
+    public.vw_public_queue,
+    public.vw_public_leaderboard
+TO anon, authenticated;
 
--- ============================================================================
--- 14. INITIAL SEED DATA
--- ============================================================================
--- Default Event Password: Event@2026 (scrypt hash pre-computed)
--- Default Admin: admin / adminPassword2026!
-INSERT INTO public.system_config (
-    id, 
-    event_name, 
-    game_mode, 
-    target_count, 
-    game_duration, 
-    difficulty, 
-    event_password_hash, 
-    event_password_enabled, 
-    registration_open, 
-    event_active
-) VALUES (
-    1, 
-    'AI TARGET STRIKE 2026', 
-    'MODE_TIME', 
-    20, 
-    420, 
-    'MEDIUM', 
-    'scrypt:32768:8:1$u7xK3nQo6Z8a2V0p$6b11cb3a699c2d77054f9a0c7974e0d4d03d3c8c2cfb6f9f0a0d0a5f9f6b11cb3a699c2d77054f9a0c7974e0d4d03d3c8c2cfb6f9f0a0d0a5f9f', 
-    1, 
-    1, 
-    1
-) ON CONFLICT (id) DO UPDATE SET 
-    event_name = EXCLUDED.event_name,
-    game_duration = EXCLUDED.game_duration,
-    event_password_enabled = 1;
+GRANT ALL PRIVILEGES ON TABLE
+    public.system_config,
+    public.teams,
+    public.participants,
+    public.access_credentials,
+    public.private_documents,
+    public.game_sessions,
+    public.game_results,
+    public.queue_events,
+    public.admin_users,
+    public.audit_logs
+TO service_role;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO service_role;
 
--- Seed default admin account
-INSERT INTO public.admin_users (username, password_hash, role)
-VALUES (
-    'admin', 
-    'scrypt:32768:8:1$t6Y1l9Kp7X4m0N2q$5a22bb4a788d3e88165e8b1d8885f1e5e14e4d9d3dfc7e0e1b1e1b6e0e7c22bb4a788d3e88165e8b1d8885f1e5e14e4d9d3dfc7e0e1b1e1b6e0e', 
-    'ADMIN'
-) ON CONFLICT (username) DO NOTHING;
+-- Ten isolated test teams and their corresponding SHA-256 access-code hashes.
+-- Negative queue numbers keep these fixtures out of normal registration order;
+-- the public queue view also explicitly excludes all test teams.
+WITH test_codes AS (
+    SELECT
+        n,
+        'ATS-TEST-' || lpad(n::TEXT, 3, '0') AS code
+    FROM generate_series(1, 10) AS series(n)
+),
+queue_start AS (
+    SELECT COALESCE(MIN(queue_number), 0) AS first_queue
+    FROM public.teams
+    WHERE is_test = FALSE
+)
+INSERT INTO public.teams (
+    team_code, team_name, college_name, queue_number, status, is_test
+)
+SELECT
+    test_codes.code,
+    'Test Team ' || lpad(test_codes.n::TEXT, 3, '0'),
+    'TEST ONLY',
+    queue_start.first_queue - test_codes.n,
+    'WAITING',
+    TRUE
+FROM test_codes
+CROSS JOIN queue_start
+ON CONFLICT (team_code) DO NOTHING;
 
--- Verification notification
-DO $$
-BEGIN
-    RAISE NOTICE 'AI TARGET STRIKE: Supabase PostgreSQL Schema successfully deployed!';
-END $$;
+INSERT INTO public.access_credentials (team_id, credential_hash)
+SELECT
+    teams.id,
+    encode(digest(upper(teams.team_code), 'sha256'), 'hex')
+FROM public.teams AS teams
+WHERE teams.is_test = TRUE
+  AND teams.team_code ~ '^ATS-TEST-00[1-9]$|^ATS-TEST-010$'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM public.access_credentials AS credentials
+      WHERE credentials.team_id = teams.id
+        AND credentials.credential_hash =
+            encode(digest(upper(teams.team_code), 'sha256'), 'hex')
+  )
+ON CONFLICT (credential_hash) DO NOTHING;
+
+COMMIT;

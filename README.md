@@ -54,7 +54,7 @@ Traditional campus event games suffer from long spectator wait times, manual cli
 3. **Camera College ID Capture**: Live participant registration with real-time camera capture (`getUserMedia`), automatic photo cropping, and duplicate phone/roll number validation.
 4. **Cryptographic Game Access Credentials**: Randomly generated `ATS-XXXX-XXXX` access codes with salted SHA-256 server-side hashing and single-use session tokens.
 5. **Projector Queue Display**: High-contrast, large-screen stadium display for 1080p/4K beamers with an automatic 30-second reporting countdown and audible call chimes.
-6. **Live SSE Scoreboard**: Real-time spectator leaderboard with deterministic tie-breaking (Targets Destroyed $\to$ Accuracy % $\to$ Total Score $\to$ Time) and strict zero-PII sanitization.
+6. **Live SSE Scoreboard**: Real-time spectator leaderboard ordered by score, then fastest completion time for tied scores, with strict zero-PII sanitization.
 7. **Protected Admin Command Center**: Web GUI and terminal CLI for real-time queue orchestration, encrypted ID card review, instant test team generation, and emergency compliance wipes.
 
 ---
@@ -87,11 +87,14 @@ Each competing team consists of **exactly two participants** stationed together 
 ### 7-Minute Authoritative Story Progression
 Every tournament match runs on an authoritative **7-minute (420 seconds)** server-synced clock. The game automatically escalates across three dynamic story chapters:
 
+- The official clock starts after the on-screen countdown, not when the access code is verified. The game station requests fullscreen from the Start button and returns to normal view when the match ends. If the browser denies fullscreen, retry with the HUD toggle; press Esc if fullscreen does not exit at match end.
+- The match clock updates continuously in the HUD. Shooting is supported by left-click/pointer input on the game canvas or the connected ESP32 trigger.
+
 ```
 00:00                     02:00                     05:00                     07:00
   ├─── Chapter 1: EASY ──────┼── Chapter 2: MEDIUM ────┼──── Chapter 3: HARD ─────┤
   │    AI Awakening          │   Multimodal Resistance │    Quantum Matrix        │
-  │    Speed: 1.8 - 3.2      │   Speed: 2.8 - 4.8      │    Speed: 4.0 - 6.8      │
+  │    Speed: 1.44 - 2.56    │   Speed: 2.24 - 3.84    │    Speed: 3.2 - 5.44     │
   │    Base Score: 100 pts   │   Base Score: 130 pts   │    Base Score: 160 pts   │
   │    Combo Mult: 1.15x     │   Combo Mult: 1.25x     │    Combo Mult: 1.40x     │
 ```
@@ -101,15 +104,14 @@ Every tournament match runs on an authoritative **7-minute (420 seconds)** serve
 - **Chapter 3: Quantum Matrix Overdrive (5:00 – 7:00 | HARD)**: Frontier AI cores activate maximum evasive hyper-glitch trajectories. Demands millimeter-precision crosshair tracking.
 
 ### Dynamic Sensitivity Shifting Engine
-To challenge player adaptability, the engine automatically fluctuates Player 1's reticle sensitivity every time a target is eliminated:
+Target movement is scaled down by 20% across all chapters. Player 1's reticle starts at maximum speed (100%) and randomly changes to a different tier after every target hit:
 
 | Sensitivity Tier | Multiplier | Tactical Tag | On-Screen Visual Indicator |
 | :--- | :--- | :--- | :--- |
-| **PRECISION** | `0.80x` | `FINE` | `#10b981` (Emerald Green Alert) |
-| **TACTICAL** | `0.90x` | `STEADY` | `#06b6d4` (Cyan Alert) |
-| **BALANCED** | `1.00x` | `NORMAL` | `#38bdf8` (Sky Blue Alert) |
-| **AGILE** | `1.15x` | `SMOOTH` | `#a855f7` (Purple Alert) |
-| **RESPONSIVE** | `1.25x` | `DYNAMIC` | `#f59e0b` (Amber Alert) |
+| **LOW** | `50%` | `SLOW` | `#10b981` (Emerald Green Alert) |
+| **MEDIUM** | `70%` | `STEADY` | `#06b6d4` (Cyan Alert) |
+| **HIGH** | `85%` | `QUICK` | `#38bdf8` (Sky Blue Alert) |
+| **MAX** | `100%` | `MAX` | `#f59e0b` (Amber Alert) |
 
 ### 25 Frontier AI Models Catalog
 The game spawns **strictly ONE AI target at a time** into the upper combat airspace, cycling through 25 real-world AI industry models complete with brand colorways, vector glyphs, points, and speed characteristics:
@@ -308,7 +310,7 @@ The system uses SQLite 3 optimized for enterprise stability during sudden campus
   - `audit_logs`: Detailed operational logging for security review.
 
 ### PostgreSQL / Supabase Production Schema
-For distributed multi-server deployments, a complete PostgreSQL schema is provided in [`sql.md`](file:///d:/2026event/sql.md) complete with Row Level Security (RLS) policies, UUID generators, and view definitions.
+For Supabase setup, run the SQL Editor script in [`sql.md`](./sql.md). It defines the PostgreSQL schema, private-by-default table access, public-safe views, and ten test game access codes (`ATS-TEST-001` through `ATS-TEST-010`). Local development also seeds these codes into SQLite on backend startup. Running the Supabase script does not migrate the Flask backend: it currently connects to SQLite, so a PostgreSQL database-layer migration is still required before the live app uses Supabase.
 
 ---
 

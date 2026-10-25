@@ -21,11 +21,7 @@ function AppLayout() {
           <Route path="/" element={<Navigate to="/game" replace />} />
           <Route
             path="/game"
-            element={
-              <EventPasswordGate>
-                <GameStation />
-              </EventPasswordGate>
-            }
+            element={<GameStation />}
           />
           <Route
             path="/register"

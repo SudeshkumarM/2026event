@@ -179,6 +179,10 @@ def register_team():
     # Extract inputs (Form-Data or JSON)
     p1_file_bytes = None
     p2_file_bytes = None
+    p1_data_url = None
+    p2_data_url = None
+    p1_mime = 'image/jpeg'
+    p2_mime = 'image/jpeg'
 
     if request.content_type and 'multipart/form-data' in request.content_type:
         team_name = request.form.get('team_name', '').strip()
@@ -198,23 +202,33 @@ def register_team():
         p2_file = request.files.get('p2_id_card')
         if p1_file:
             p1_file_bytes = p1_file.read()
+            p1_mime = p1_file.mimetype or 'image/jpeg'
         if p2_file:
             p2_file_bytes = p2_file.read()
+            p2_mime = p2_file.mimetype or 'image/jpeg'
 
         # Also support base64 strings passed via form if camera capture was used
-        if not p1_file_bytes and request.form.get('p1_id_card_data'):
+        raw_p1 = request.form.get('p1_id_card_data')
+        raw_p2 = request.form.get('p2_id_card_data')
+        if not p1_file_bytes and raw_p1:
             try:
-                data_url = request.form.get('p1_id_card_data')
-                header, encoded = data_url.split(',', 1) if ',' in data_url else ('', data_url)
+                parts = raw_p1.split(',', 1) if ',' in raw_p1 else ('', raw_p1)
+                header, encoded = parts
                 p1_file_bytes = base64.b64decode(encoded)
+                p1_data_url = raw_p1
+                if 'image/png' in header: p1_mime = 'image/png'
+                elif 'image/webp' in header: p1_mime = 'image/webp'
             except Exception:
                 p1_file_bytes = None
 
-        if not p2_file_bytes and request.form.get('p2_id_card_data'):
+        if not p2_file_bytes and raw_p2:
             try:
-                data_url = request.form.get('p2_id_card_data')
-                header, encoded = data_url.split(',', 1) if ',' in data_url else ('', data_url)
+                parts = raw_p2.split(',', 1) if ',' in raw_p2 else ('', raw_p2)
+                header, encoded = parts
                 p2_file_bytes = base64.b64decode(encoded)
+                p2_data_url = raw_p2
+                if 'image/png' in header: p2_mime = 'image/png'
+                elif 'image/webp' in header: p2_mime = 'image/webp'
             except Exception:
                 p2_file_bytes = None
 
@@ -238,17 +252,25 @@ def register_team():
 
         if p1_data_url and isinstance(p1_data_url, str):
             try:
-                header, encoded = p1_data_url.split(',', 1) if ',' in p1_data_url else ('', p1_data_url)
+                parts = p1_data_url.split(',', 1) if ',' in p1_data_url else ('', p1_data_url)
+                header, encoded = parts
                 p1_file_bytes = base64.b64decode(encoded)
+                if 'image/png' in header: p1_mime = 'image/png'
+                elif 'image/webp' in header: p1_mime = 'image/webp'
             except Exception:
                 p1_file_bytes = None
+                p1_data_url = None
 
         if p2_data_url and isinstance(p2_data_url, str):
             try:
-                header, encoded = p2_data_url.split(',', 1) if ',' in p2_data_url else ('', p2_data_url)
+                parts = p2_data_url.split(',', 1) if ',' in p2_data_url else ('', p2_data_url)
+                header, encoded = parts
                 p2_file_bytes = base64.b64decode(encoded)
+                if 'image/png' in header: p2_mime = 'image/png'
+                elif 'image/webp' in header: p2_mime = 'image/webp'
             except Exception:
                 p2_file_bytes = None
+                p2_data_url = None
 
     # Mandatory text validations (Roll number is optional)
     if not team_name:
@@ -361,25 +383,28 @@ def register_team():
             """, (team_code, team_name, college_name or p1_college, next_queue_num))
             team_id = cursor.lastrowid
 
-            # Insert Player 1 (Aim)
+            # Insert Player 1 (Aim) — store image data URL and blob for DB-backed verification
             cursor.execute("""
-                INSERT INTO participants (team_id, player_role, name, college, phone, roll_number, id_card_filename)
-                VALUES (?, 'PLAYER_1_AIM', ?, ?, ?, ?, ?)
-            """, (team_id, p1_name, p1_college, clean_p1_phone, p1_roll, p1_storage_key))
+                INSERT INTO participants (team_id, player_role, name, college, phone, roll_number, id_card_filename, id_card_blob, id_card_data, id_card_mime)
+                VALUES (?, 'PLAYER_1_AIM', ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (team_id, p1_name, p1_college, clean_p1_phone, p1_roll, p1_storage_key,
+                  p1_file_bytes, p1_data_url, p1_mime))
             p1_id = cursor.lastrowid
 
-            # Insert Player 2 (Shoot)
+            # Insert Player 2 (Shoot) — store image data URL and blob for DB-backed verification
             cursor.execute("""
-                INSERT INTO participants (team_id, player_role, name, college, phone, roll_number, id_card_filename)
-                VALUES (?, 'PLAYER_2_SHOOT', ?, ?, ?, ?, ?)
-            """, (team_id, p2_name, p2_college, clean_p2_phone, p2_roll, p2_storage_key))
+                INSERT INTO participants (team_id, player_role, name, college, phone, roll_number, id_card_filename, id_card_blob, id_card_data, id_card_mime)
+                VALUES (?, 'PLAYER_2_SHOOT', ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (team_id, p2_name, p2_college, clean_p2_phone, p2_roll, p2_storage_key,
+                  p2_file_bytes, p2_data_url, p2_mime))
             p2_id = cursor.lastrowid
 
-            # Insert Private Documents Metadata
+            # Insert Private Documents Metadata (with image blob for DB-backed retrieval)
             cursor.execute("""
-                INSERT INTO private_documents (participant_id, private_storage_key, verification_status)
-                VALUES (?, ?, 'PENDING'), (?, ?, 'PENDING')
-            """, (p1_id, p1_storage_key, p2_id, p2_storage_key))
+                INSERT INTO private_documents (participant_id, private_storage_key, verification_status, image_blob, image_data, mime_type)
+                VALUES (?, ?, 'PENDING', ?, ?, ?), (?, ?, 'PENDING', ?, ?, ?)
+            """, (p1_id, p1_storage_key, p1_file_bytes, p1_data_url, p1_mime,
+                  p2_id, p2_storage_key, p2_file_bytes, p2_data_url, p2_mime))
 
             # Insert Hashed Access Credential
             cursor.execute("""
@@ -507,7 +532,7 @@ def verify_game_access():
     cursor.execute("""
         SELECT id, session_token, status, started_at, scheduled_end_at, difficulty, total_score, total_hits, total_misses
         FROM game_sessions 
-        WHERE team_id = ? AND status IN ('COUNTDOWN', 'PLAYING')
+        WHERE team_id = ? AND status IN ('INITIATED', 'COUNTDOWN', 'PLAYING')
         ORDER BY created_at DESC LIMIT 1
     """, (team['id'],))
     existing_session = cursor.fetchone()
@@ -533,11 +558,12 @@ def verify_game_access():
             "success": True,
             "session_id": existing_session['id'],
             "session_token": existing_session['session_token'],
+            "session_status": existing_session['status'],
             "team_code": team['team_code'],
             "team_name": team['team_name'],
             "difficulty": existing_session['difficulty'],
             "duration_seconds": duration_seconds,
-            "remaining_seconds": remaining,
+            "remaining_seconds": remaining if existing_session['scheduled_end_at'] else duration_seconds,
             "story_enabled": bool(config.get('story_enabled', 1)),
             "resumed": True,
             "current_score": existing_session['total_score'],
@@ -548,26 +574,18 @@ def verify_game_access():
     # Create new authoritative game session
     session_id = str(uuid.uuid4())
     session_token = f"ATS-TKN-{uuid.uuid4().hex[:16].upper()}"
-    scheduled_end = now + timedelta(seconds=duration_seconds)
-
     cursor.execute("""
         INSERT INTO game_sessions (
             id, team_id, status, session_token, mode, difficulty,
             config_snapshot, started_at, scheduled_end_at
-        ) VALUES (?, ?, 'COUNTDOWN', ?, 'MODE_TIME', ?, ?, ?, ?)
+        ) VALUES (?, ?, 'INITIATED', ?, 'MODE_TIME', ?, ?, NULL, NULL)
     """, (
-        session_id, team['id'], session_token, selected_difficulty,
-        json.dumps(config), now.isoformat(), scheduled_end.isoformat()
+        session_id, team['id'], session_token, selected_difficulty, json.dumps(config)
     ))
-
-    # Update team status to PLAYING
-    cursor.execute("""
-        UPDATE teams SET status = 'PLAYING', updated_at = CURRENT_TIMESTAMP WHERE id = ?
-    """, (team['id'],))
 
     cursor.execute("""
         INSERT INTO queue_events (team_id, event_type, details, triggered_by)
-        VALUES (?, 'GAME_AUTHORIZED', 'Game access code verified. Session started.', 'GAME_ACCESS_PORTAL')
+        VALUES (?, 'GAME_AUTHORIZED', 'Game access code verified; session is awaiting player start.', 'GAME_ACCESS_PORTAL')
     """, (team['id'],))
 
     conn.commit()
@@ -581,6 +599,7 @@ def verify_game_access():
         "success": True,
         "session_id": session_id,
         "session_token": session_token,
+        "session_status": "INITIATED",
         "team_code": team['team_code'],
         "team_name": team['team_name'],
         "difficulty": selected_difficulty,
@@ -588,6 +607,85 @@ def verify_game_access():
         "remaining_seconds": duration_seconds,
         "story_enabled": bool(config.get('story_enabled', 1)),
         "resumed": False
+    })
+
+
+@api_bp.route('/game/session/start', methods=['POST'])
+def start_game_session():
+    data = request.get_json(silent=True) or {}
+    session_token = data.get('session_token')
+    if not session_token:
+        return jsonify({"success": False, "error": "Session token required."}), 400
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, team_id, status, config_snapshot, scheduled_end_at
+        FROM game_sessions
+        WHERE session_token = ?
+    """, (session_token,))
+    session = cursor.fetchone()
+
+    if not session:
+        conn.close()
+        return jsonify({"success": False, "error": "Game session not found."}), 404
+
+    try:
+        config = json.loads(session['config_snapshot'])
+    except (TypeError, ValueError):
+        conn.close()
+        return jsonify({"success": False, "error": "Game session configuration is invalid."}), 500
+
+    try:
+        duration_seconds = int(config.get('game_duration', 420))
+    except (TypeError, ValueError):
+        conn.close()
+        return jsonify({"success": False, "error": "Game duration configuration is invalid."}), 500
+    if duration_seconds <= 0:
+        conn.close()
+        return jsonify({"success": False, "error": "Game duration must be greater than zero."}), 500
+
+    if session['status'] in ('INITIATED', 'COUNTDOWN'):
+        now = datetime.now(timezone.utc)
+        scheduled_end = now + timedelta(seconds=duration_seconds)
+        cursor.execute("""
+            UPDATE game_sessions
+            SET status = 'PLAYING', started_at = ?, scheduled_end_at = ?
+            WHERE id = ? AND status IN ('INITIATED', 'COUNTDOWN')
+        """, (now.isoformat(), scheduled_end.isoformat(), session['id']))
+        cursor.execute("""
+            UPDATE teams
+            SET status = 'PLAYING', updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (session['team_id'],))
+        cursor.execute("""
+            INSERT INTO queue_events (team_id, event_type, details, triggered_by)
+            VALUES (?, 'GAME_STARTED', 'Official game timer started.', 'GAME_STATION')
+        """, (session['team_id'],))
+        conn.commit()
+        public_queue = QueueManager.get_public_queue(conn)
+        notify_clients('QUEUE_UPDATE', public_queue)
+        remaining_seconds = duration_seconds
+    elif session['status'] == 'PLAYING':
+        try:
+            scheduled_end = datetime.fromisoformat(session['scheduled_end_at'])
+            remaining_seconds = max(
+                0,
+                int((scheduled_end - datetime.now(timezone.utc)).total_seconds())
+            )
+        except (TypeError, ValueError):
+            conn.close()
+            return jsonify({"success": False, "error": "Game session end time is invalid."}), 500
+    else:
+        conn.close()
+        return jsonify({"success": False, "error": "This game session can no longer be started."}), 409
+
+    conn.close()
+    return jsonify({
+        "success": True,
+        "status": "PLAYING",
+        "duration_seconds": duration_seconds,
+        "remaining_seconds": remaining_seconds
     })
 
 
@@ -614,14 +712,23 @@ def get_game_session_status():
     if not sess:
         return jsonify({"success": False, "error": "Active game session not found."}), 404
 
+    try:
+        config = json.loads(sess['config_snapshot'])
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "Game session configuration is invalid."}), 500
+
+    try:
+        duration_seconds = int(config.get('game_duration', 420))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "Game duration configuration is invalid."}), 500
     now = datetime.now(timezone.utc)
-    remaining = 0
+    remaining = duration_seconds if not sess['scheduled_end_at'] else 0
     if sess['scheduled_end_at']:
         try:
             sched = datetime.fromisoformat(sess['scheduled_end_at'])
             remaining = max(0, int((sched - now).total_seconds()))
-        except Exception:
-            remaining = 0
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "Game session end time is invalid."}), 500
 
     return jsonify({
         "success": True,
@@ -630,6 +737,7 @@ def get_game_session_status():
         "team_name": sess['team_name'],
         "status": sess['status'],
         "difficulty": sess['difficulty'],
+        "duration_seconds": duration_seconds,
         "remaining_seconds": remaining,
         "total_score": sess['total_score'],
         "total_hits": sess['total_hits'],
@@ -793,16 +901,8 @@ def get_leaderboard():
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT tie_breaker_rule FROM system_config WHERE id = 1;")
-    cfg = cursor.fetchone()
-    rule = cfg['tie_breaker_rule'] if cfg else 'ACCURACY_THEN_TIME'
-
-    order_clause = "r.score DESC, r.accuracy DESC, r.hits DESC, r.completion_time_ms ASC"
-    if rule == 'TIME_THEN_ACCURACY':
-        order_clause = "r.score DESC, r.completion_time_ms ASC, r.accuracy DESC, r.hits DESC"
-
     # Joined query strictly avoiding private fields
-    cursor.execute(f"""
+    cursor.execute("""
         SELECT 
             t.team_code,
             t.team_name,
@@ -818,8 +918,8 @@ def get_leaderboard():
             r.created_at
         FROM game_results r
         JOIN teams t ON r.team_id = t.id
-        WHERE r.is_official = 1
-        ORDER BY {order_clause}
+        WHERE r.is_official = 1 AND t.is_test = 0
+        ORDER BY r.score DESC, r.completion_time_ms ASC, r.accuracy DESC, r.hits DESC
     """)
     rows = cursor.fetchall()
     conn.close()

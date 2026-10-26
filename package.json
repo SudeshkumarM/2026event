@@ -1,0 +1,21 @@
+{
+  "name": "ai-target-strike",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TECNOX — AI DOWNFALL - 2-Player Competitive Event & Live Queue Management System",
+  "scripts": {
+    "dev": "node dev-runner.mjs",
+    "dev:https": "node dev-runner.mjs --https",
+    "frontend": "npm --prefix teamnexus/frontend run dev",
+    "backend": "powershell -Command \"$env:PYTHONPATH='teamnexus/backend'; .\\teamnexus\\backend\\venv\\Scripts\\python.exe teamnexus/backend/run.py\"",
+    "build": "npm --prefix teamnexus/frontend run build",
+    "preview": "npm --prefix teamnexus/frontend run preview",
+    "live-server": "npm --prefix teamnexus/frontend run preview -- --port 5500 --host 0.0.0.0",
+    "postinstall": "npm --prefix teamnexus/frontend install",
+    "start": "node dev-runner.mjs",
+    "admin:terminal": "start start_admin_terminal.bat"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^2.3.0"
+  }
+}

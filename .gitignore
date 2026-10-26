@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+**/__pycache__/
+*.py[cod]
+**/venv/
+**/node_modules/
+**/dist/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+**/secure_uploads/
+**/uploads/
+teamnexus/frontend/certs/
+backup/
+.vscode/
